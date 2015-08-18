@@ -74,6 +74,21 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_command_array, 0, 0, 2)
     ZEND_ARG_INFO(0, command_argv)
 ZEND_END_ARG_INFO()
 
+
+/* Macro to set err and errstr together */
+#define HIREDIS_SET_ERROR(client, perr, perrstr) do { \
+    (client)->err = (perr); \
+    snprintf((client)->errstr, sizeof((client)->errstr), "%s", (perrstr)); \
+} while(0)
+
+/* Macro to ensure ctx is not NULL */
+#define HIREDIS_ENSURE_CTX(client) do { \
+    if (!(client)->ctx) { \
+        HIREDIS_SET_ERROR(client, REDIS_ERR, "No redisContext"); \
+        RETURN_FALSE; \
+    } \
+} while(0)
+
 /* Fetch hiredis_t inside zend_object */
 static inline hiredis_t* hiredis_obj_fetch(zend_object *obj) {
     return (hiredis_t*)((char*)(obj) - XtOffsetOf(hiredis_t, std));
@@ -220,7 +235,7 @@ static void _hiredis_command(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is_
     string_args = (char**)safe_emalloc(argc, sizeof(char*), 0);
     for (i = 0; i < argc; i++) {
         convert_to_string_ex(&args[i]);
-        string_args[i - 1] = Z_STRVAL_P(&args[i]);
+        string_args[i] = Z_STRVAL_P(&args[i]);
     }
 
     if (is_append) {
@@ -271,20 +286,6 @@ static void _hiredis_conn_deinit(hiredis_t* client) {
     }
     client->ctx = NULL;
 }
-
-/* Macro to set err and errstr together */
-#define HIREDIS_SET_ERROR(client, perr, perrstr) do { \
-    (client)->err = (perr); \
-    snprintf((client)->errstr, sizeof((client)->errstr), "%s", (perrstr)); \
-} while(0)
-
-/* Macro to ensure ctx is not NULL */
-#define HIREDIS_ENSURE_CTX(client) do { \
-    if (!(client)->ctx) { \
-        HIREDIS_SET_ERROR(client, REDIS_ERR, "No redisContext"); \
-        RETURN_FALSE; \
-    } \
-} while(0)
 
 /* {{{ proto void Hiredis::__construct()
    Constructor for Hiredis. */
