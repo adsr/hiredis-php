@@ -1,5 +1,5 @@
 --TEST--
-Check Hiredis::set* methods
+Check Hiredis::(set|get)*
 --SKIPIF--
 <?php if (!extension_loaded("hiredis")) print "skip"; ?>
 --FILE--

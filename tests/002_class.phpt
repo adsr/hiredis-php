@@ -1,5 +1,5 @@
 --TEST--
-Check for Hiredis class
+Check Hiredis class
 --SKIPIF--
 <?php if (!extension_loaded("hiredis")) print "skip"; ?>
 --FILE--

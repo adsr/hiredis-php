@@ -1,5 +1,5 @@
 --TEST--
-Check for hiredis presence
+Check hiredis extension
 --SKIPIF--
 <?php if (!extension_loaded("hiredis")) print "skip"; ?>
 --FILE--
