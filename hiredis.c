@@ -75,16 +75,21 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_command_array, 0, 0, 2)
 ZEND_END_ARG_INFO()
 
 
-/* Macro to set err and errstr together */
-#define HIREDIS_SET_ERROR(client, perr, perrstr) do { \
+/* Macro to set custom err and errstr together */
+#define HIREDIS_SET_ERROR_EX(client, perr, perrstr) do { \
     (client)->err = (perr); \
     snprintf((client)->errstr, sizeof((client)->errstr), "%s", (perrstr)); \
+} while(0)
+
+/* Macro to set err and errstr together */
+#define HIREDIS_SET_ERROR(client) do { \
+    HIREDIS_SET_ERROR_EX((client), (client)->ctx->err, (client)->ctx->errstr); \
 } while(0)
 
 /* Macro to ensure ctx is not NULL */
 #define HIREDIS_ENSURE_CTX(client) do { \
     if (!(client)->ctx) { \
-        HIREDIS_SET_ERROR(client, REDIS_ERR, "No redisContext"); \
+        HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "No redisContext"); \
         RETURN_FALSE; \
     } \
 } while(0)
@@ -122,7 +127,7 @@ static int _hiredis_set_timeout(hiredis_t* client, long timeout_us) {
     timeout_tv.tv_sec = timeout_us / 1000000;
     timeout_tv.tv_usec = timeout_us % 1000000;
     if (REDIS_OK != redisSetTimeout(client->ctx, timeout_tv)) {
-        HIREDIS_SET_ERROR(client, REDIS_ERR, "redisSetTimeout failed");
+        HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisSetTimeout failed");
         return REDIS_ERR;
     }
     return REDIS_OK;
@@ -131,7 +136,7 @@ static int _hiredis_set_timeout(hiredis_t* client, long timeout_us) {
 /* Wrap redisKeepAlive */
 static int _hiredis_set_keep_alive_int(hiredis_t* client, int interval) {
     if (REDIS_OK != redisKeepAlive(client->ctx, interval)) {
-        HIREDIS_SET_ERROR(client, REDIS_ERR, "redisKeepAlive failed");
+        HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisKeepAlive failed");
         return REDIS_ERR;
     }
     return REDIS_OK;
@@ -208,7 +213,7 @@ static void _hiredis_command(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is_
         RETURN_FALSE;
     }
 
-    if ((is_array && argc != 2) || (!is_array && argc < 1)) {
+    if ((is_array && argc != 1) || (!is_array && argc < 1)) {
         WRONG_PARAM_COUNT;
     }
 
@@ -217,12 +222,12 @@ static void _hiredis_command(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is_
 
     if (is_array) {
         zval* arr;
-        arr = &args[1];
+        arr = &args[0];
         if (Z_TYPE_P(arr) != IS_ARRAY) {
             SEPARATE_ZVAL(arr);
             convert_to_array(arr);
         }
-        argc = 1 + zend_hash_num_elements(Z_ARRVAL_P(arr));
+        argc = zend_hash_num_elements(Z_ARRVAL_P(arr));
         newargs = (zval*)safe_emalloc(argc, sizeof(zval), 0);
         i = 0;
         ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(arr), zv) {
@@ -240,7 +245,7 @@ static void _hiredis_command(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is_
 
     if (is_append) {
         if (REDIS_OK != redisAppendCommandArgv(client->ctx, argc, (const char**)string_args, NULL)) {
-            HIREDIS_SET_ERROR(client, client->err, client->errstr);
+            HIREDIS_SET_ERROR(client);
             RETVAL_FALSE;
         } else {
             RETVAL_TRUE;
@@ -249,7 +254,7 @@ static void _hiredis_command(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is_
         if (zv = redisCommandArgv(client->ctx, argc, (const char**)string_args, NULL)) {
             RETVAL_ZVAL(zv, 0, 0);
         } else {
-            HIREDIS_SET_ERROR(client, REDIS_ERR, "redisCommandArgv returned NULL");
+            HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisCommandArgv returned NULL");
             RETVAL_FALSE;
         }
     }
@@ -327,10 +332,10 @@ PHP_FUNCTION(hiredis_connect) {
     client = Z_HIREDIS_P(zobj);
     _hiredis_conn_deinit(client);
     if (!(client->ctx = redisConnect(ip, port))) {
-        HIREDIS_SET_ERROR(client, REDIS_ERR, "redisConnect returned NULL");
+        HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisConnect returned NULL");
         RETURN_FALSE;
     } else if (client->ctx->err) {
-        HIREDIS_SET_ERROR(client, client->ctx->err, client->ctx->errstr);
+        HIREDIS_SET_ERROR(client);
         RETURN_FALSE;
     }
     if (REDIS_OK == _hiredis_conn_init(client)) {
@@ -353,10 +358,10 @@ PHP_FUNCTION(hiredis_connect_unix) {
     client = Z_HIREDIS_P(zobj);
     _hiredis_conn_deinit(client);
     if (!(client->ctx = redisConnectUnix(path))) {
-        HIREDIS_SET_ERROR(client, REDIS_ERR, "redisConnectUnix returned NULL");
+        HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisConnectUnix returned NULL");
         RETURN_FALSE;
     } else if (client->ctx->err) {
-        HIREDIS_SET_ERROR(client, client->ctx->err, client->ctx->errstr);
+        HIREDIS_SET_ERROR(client);
         RETURN_FALSE;
     }
     if (REDIS_OK != _hiredis_conn_init(client)) {
@@ -368,6 +373,7 @@ PHP_FUNCTION(hiredis_connect_unix) {
 
 /* {{{ proto bool hiredis_reconnect()
    Reonnect to a server. */
+#ifdef HAVE_HIREDIS_RECONNECT
 PHP_FUNCTION(hiredis_reconnect) {
     zval* zobj;
     hiredis_t* client;
@@ -379,7 +385,7 @@ PHP_FUNCTION(hiredis_reconnect) {
     client = Z_HIREDIS_P(zobj);
     HIREDIS_ENSURE_CTX(client);
     if (REDIS_OK != redisReconnect(client->ctx)) {
-        HIREDIS_SET_ERROR(client, client->ctx->err, client->ctx->errstr);
+        HIREDIS_SET_ERROR(client);
         RETURN_FALSE;
     }
     if (REDIS_OK != _hiredis_conn_init(client)) {
@@ -387,6 +393,7 @@ PHP_FUNCTION(hiredis_reconnect) {
     }
     RETURN_TRUE;
 }
+#endif
 /* }}} */
 
 /* {{{ proto bool hiredis_set_timeout(int timeout_us)
@@ -489,28 +496,28 @@ PHP_FUNCTION(hiredis_get_max_read_buf) {
 }
 /* }}} */
 
-/* {{{ proto mixed hiredis_command(string fmt, args...)
+/* {{{ proto mixed hiredis_command(string args...)
    Execute command and return result. */
 PHP_FUNCTION(hiredis_command) {
     _hiredis_command(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0, 0);
 }
 /* }}} */
 
-/* {{{ proto string hiredis_command_array(string fmt, array args)
+/* {{{ proto string hiredis_command_array(array args)
    Execute command and return result. */
 PHP_FUNCTION(hiredis_command_array) {
     _hiredis_command(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1, 0);
 }
 /* }}} */
 
-/* {{{ proto string hiredis_append_command(string fmt, args...)
+/* {{{ proto string hiredis_append_command(string args...)
    Append command to pipeline. */
 PHP_FUNCTION(hiredis_append_command) {
-    _hiredis_command(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1, 0);
+    _hiredis_command(INTERNAL_FUNCTION_PARAM_PASSTHRU, 0, 1);
 }
 /* }}} */
 
-/* {{{ proto string hiredis_append_command_array(string fmt, array args)
+/* {{{ proto string hiredis_append_command_array(array args)
    Append command to pipeline. */
 PHP_FUNCTION(hiredis_append_command_array) {
     _hiredis_command(INTERNAL_FUNCTION_PARAM_PASSTHRU, 1, 1);
@@ -520,7 +527,22 @@ PHP_FUNCTION(hiredis_append_command_array) {
 /* {{{ proto string hiredis_get_reply()
    Get reply from pipeline. */
 PHP_FUNCTION(hiredis_get_reply) {
-    // TODO
+    zval* zobj;
+    hiredis_t* client;
+    void* reply = NULL;
+    if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "O", &zobj, hiredis_ce) == FAILURE) {
+        RETURN_FALSE;
+    }
+    client = Z_HIREDIS_P(zobj);
+    HIREDIS_ENSURE_CTX(client);
+    if (REDIS_OK != redisGetReply(client->ctx, &reply)) {
+        HIREDIS_SET_ERROR(client);
+        RETURN_FALSE;
+    }
+    if (reply) {
+        RETURN_ZVAL((zval*)reply, 0, 0);
+    }
+    RETURN_NULL();
 }
 /* }}} */
 
@@ -540,13 +562,14 @@ PHP_FUNCTION(hiredis_get_last_error) {
 }
 /* }}} */
 
+
+
 /* {{{ hiredis_methods */
 zend_function_entry hiredis_methods[] = {
     PHP_ME(Hiredis, __construct, arginfo_hiredis_none, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
     PHP_ME(Hiredis, __destruct,  arginfo_hiredis_none, ZEND_ACC_PUBLIC)
     PHP_ME_MAPPING(connect,              hiredis_connect,              arginfo_hiredis_connect,            ZEND_ACC_PUBLIC)
     PHP_ME_MAPPING(connectUnix,          hiredis_connect_unix,         arginfo_hiredis_connect_unix,       ZEND_ACC_PUBLIC)
-    PHP_ME_MAPPING(reconnect,            hiredis_reconnect,            arginfo_hiredis_none,               ZEND_ACC_PUBLIC)
     PHP_ME_MAPPING(setTimeout,           hiredis_set_timeout,          arginfo_hiredis_set_timeout,        ZEND_ACC_PUBLIC)
     PHP_ME_MAPPING(getTimeout,           hiredis_get_timeout,          arginfo_hiredis_none,               ZEND_ACC_PUBLIC)
     PHP_ME_MAPPING(setKeepAliveInterval, hiredis_set_keep_alive_int,   arginfo_hiredis_set_keep_alive_int, ZEND_ACC_PUBLIC)
@@ -559,6 +582,9 @@ zend_function_entry hiredis_methods[] = {
     PHP_ME_MAPPING(appendCommandArray,   hiredis_append_command_array, arginfo_hiredis_command_array,      ZEND_ACC_PUBLIC)
     PHP_ME_MAPPING(getReply,             hiredis_get_reply,            arginfo_hiredis_none,               ZEND_ACC_PUBLIC)
     PHP_ME_MAPPING(getLastError,         hiredis_get_last_error,       arginfo_hiredis_none,               ZEND_ACC_PUBLIC)
+#ifdef HAVE_HIREDIS_RECONNECT
+    PHP_ME_MAPPING(reconnect,            hiredis_reconnect,            arginfo_hiredis_none,               ZEND_ACC_PUBLIC)
+#endif
     PHP_FE_END
 };
 /* }}} */
