@@ -52,6 +52,7 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_connect, 0, 0, 2)
     ZEND_ARG_INFO(0, ip)
     ZEND_ARG_INFO(0, port)
+    ZEND_ARG_INFO(0, timeout)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_connect_unix, 0, 0, 1)
@@ -483,7 +484,7 @@ PHP_METHOD(Hiredis, __call) {
 }
 /* }}} */
 
-/* {{{ proto bool hiredis_connect(string ip, int port)
+/* {{{ proto bool hiredis_connect(string ip, int port [, float timeout_s])
    Connect to a server via TCP. */
 PHP_FUNCTION(hiredis_connect) {
     zval* zobj;
@@ -491,11 +492,15 @@ PHP_FUNCTION(hiredis_connect) {
     char* ip;
     size_t ip_len;
     long port;
-    if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "Osl", &zobj, hiredis_ce, &ip, &ip_len, &port) == FAILURE) {
+    double timeout_s = -1;
+    if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "Osl|d", &zobj, hiredis_ce, &ip, &ip_len, &port, &timeout_s) == FAILURE) {
         RETURN_FALSE;
     }
     client = Z_HIREDIS_P(zobj);
     _hiredis_conn_deinit(client);
+    if (timeout_s >= 0) {
+        client->timeout_us = (long)(timeout_s * 1000 * 1000);
+    }
     if (!(client->ctx = redisConnect(ip, port))) {
         PHP_HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisConnect returned NULL");
         RETURN_FALSE;
