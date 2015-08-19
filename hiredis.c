@@ -851,6 +851,7 @@ PHP_MINIT_FUNCTION(hiredis) {
 
 /* {{{ PHP_MSHUTDOWN_FUNCTION */
 PHP_MSHUTDOWN_FUNCTION(hiredis) {
+    zend_hash_destroy(&func_cmd_map);
     return SUCCESS;
 }
 /* }}} */
