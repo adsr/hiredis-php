@@ -31,6 +31,7 @@ typedef struct {
     long timeout_us;
     int keep_alive_int_s;
     size_t max_read_buf;
+    int throw_exceptions;
     int err;
     char errstr[128];
     zend_object std;
