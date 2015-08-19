@@ -39,8 +39,9 @@
 #define Z_HIREDIS_P(zv) hiredis_obj_fetch(Z_OBJ_P((zv)))
 
 static zend_object_handlers hiredis_obj_handlers;
-zend_class_entry *hiredis_ce;
-zend_class_entry *hiredis_exception_ce;
+static zend_class_entry *hiredis_ce;
+static zend_class_entry *hiredis_exception_ce;
+static HashTable func_cmd_map;
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_none, 0, 0, 0)
 ZEND_END_ARG_INFO()
@@ -356,6 +357,7 @@ PHP_METHOD(Hiredis, __destruct) {
 PHP_METHOD(Hiredis, __call) {
     hiredis_t* client;
     char* func;
+    char* cmd;
     size_t func_len;
     zval* func_args;
     int func_argc;
@@ -367,181 +369,13 @@ PHP_METHOD(Hiredis, __call) {
     client = Z_HIREDIS_P(getThis());
     PHP_HIREDIS_ENSURE_CTX(client);
 
-    _hiredis_convert_zval_to_array_of_zvals(func_args, &func_args, &func_argc);
-
-    #define PHP_HIREDIS_ELSE_IF_CALL(pfunc, pcmd) \
-        } else if (0 == strcasecmp(func, (pfunc))) { \
-            _hiredis_command_array(INTERNAL_FUNCTION_PARAM_PASSTHRU, client, (pcmd), func_args, func_argc, 0)
-
-    if (0) {
-    PHP_HIREDIS_ELSE_IF_CALL("append", "APPEND");
-    PHP_HIREDIS_ELSE_IF_CALL("auth", "AUTH");
-    PHP_HIREDIS_ELSE_IF_CALL("bgrewriteaof", "BGREWRITEAOF");
-    PHP_HIREDIS_ELSE_IF_CALL("bgsave", "BGSAVE");
-    PHP_HIREDIS_ELSE_IF_CALL("bitcount", "BITCOUNT");
-    PHP_HIREDIS_ELSE_IF_CALL("bitop", "BITOP");
-    PHP_HIREDIS_ELSE_IF_CALL("bitpos", "BITPOS");
-    PHP_HIREDIS_ELSE_IF_CALL("blpop", "BLPOP");
-    PHP_HIREDIS_ELSE_IF_CALL("brpop", "BRPOP");
-    PHP_HIREDIS_ELSE_IF_CALL("brpoplpush", "BRPOPLPUSH");
-    PHP_HIREDIS_ELSE_IF_CALL("client", "CLIENT");
-    PHP_HIREDIS_ELSE_IF_CALL("cluster", "CLUSTER");
-    PHP_HIREDIS_ELSE_IF_CALL("command", "COMMAND");
-    PHP_HIREDIS_ELSE_IF_CALL("config", "CONFIG");
-    PHP_HIREDIS_ELSE_IF_CALL("dbsize", "DBSIZE");
-    PHP_HIREDIS_ELSE_IF_CALL("debug", "DEBUG");
-    PHP_HIREDIS_ELSE_IF_CALL("decr", "DECR");
-    PHP_HIREDIS_ELSE_IF_CALL("decrby", "DECRBY");
-    PHP_HIREDIS_ELSE_IF_CALL("del", "DEL");
-    PHP_HIREDIS_ELSE_IF_CALL("discard", "DISCARD");
-    PHP_HIREDIS_ELSE_IF_CALL("dump", "DUMP");
-    PHP_HIREDIS_ELSE_IF_CALL("echo", "ECHO");
-    PHP_HIREDIS_ELSE_IF_CALL("eval", "EVAL");
-    PHP_HIREDIS_ELSE_IF_CALL("evalsha", "EVALSHA");
-    PHP_HIREDIS_ELSE_IF_CALL("exec", "EXEC");
-    PHP_HIREDIS_ELSE_IF_CALL("exists", "EXISTS");
-    PHP_HIREDIS_ELSE_IF_CALL("expire", "EXPIRE");
-    PHP_HIREDIS_ELSE_IF_CALL("expireat", "EXPIREAT");
-    PHP_HIREDIS_ELSE_IF_CALL("flushall", "FLUSHALL");
-    PHP_HIREDIS_ELSE_IF_CALL("flushdb", "FLUSHDB");
-    PHP_HIREDIS_ELSE_IF_CALL("geoadd", "GEOADD");
-    PHP_HIREDIS_ELSE_IF_CALL("geodist", "GEODIST");
-    PHP_HIREDIS_ELSE_IF_CALL("geohash", "GEOHASH");
-    PHP_HIREDIS_ELSE_IF_CALL("geopos", "GEOPOS");
-    PHP_HIREDIS_ELSE_IF_CALL("georadius", "GEORADIUS");
-    PHP_HIREDIS_ELSE_IF_CALL("georadiusbymember", "GEORADIUSBYMEMBER");
-    PHP_HIREDIS_ELSE_IF_CALL("get", "GET");
-    PHP_HIREDIS_ELSE_IF_CALL("getbit", "GETBIT");
-    PHP_HIREDIS_ELSE_IF_CALL("getrange", "GETRANGE");
-    PHP_HIREDIS_ELSE_IF_CALL("getset", "GETSET");
-    PHP_HIREDIS_ELSE_IF_CALL("hdel", "HDEL");
-    PHP_HIREDIS_ELSE_IF_CALL("hexists", "HEXISTS");
-    PHP_HIREDIS_ELSE_IF_CALL("hget", "HGET");
-    PHP_HIREDIS_ELSE_IF_CALL("hgetall", "HGETALL");
-    PHP_HIREDIS_ELSE_IF_CALL("hincrby", "HINCRBY");
-    PHP_HIREDIS_ELSE_IF_CALL("hincrbyfloat", "HINCRBYFLOAT");
-    PHP_HIREDIS_ELSE_IF_CALL("hkeys", "HKEYS");
-    PHP_HIREDIS_ELSE_IF_CALL("hlen", "HLEN");
-    PHP_HIREDIS_ELSE_IF_CALL("hmget", "HMGET");
-    PHP_HIREDIS_ELSE_IF_CALL("hmset", "HMSET");
-    PHP_HIREDIS_ELSE_IF_CALL("hscan", "HSCAN");
-    PHP_HIREDIS_ELSE_IF_CALL("hset", "HSET");
-    PHP_HIREDIS_ELSE_IF_CALL("hsetnx", "HSETNX");
-    PHP_HIREDIS_ELSE_IF_CALL("hstrlen", "HSTRLEN");
-    PHP_HIREDIS_ELSE_IF_CALL("hvals", "HVALS");
-    PHP_HIREDIS_ELSE_IF_CALL("incr", "INCR");
-    PHP_HIREDIS_ELSE_IF_CALL("incrby", "INCRBY");
-    PHP_HIREDIS_ELSE_IF_CALL("incrbyfloat", "INCRBYFLOAT");
-    PHP_HIREDIS_ELSE_IF_CALL("info", "INFO");
-    PHP_HIREDIS_ELSE_IF_CALL("keys", "KEYS");
-    PHP_HIREDIS_ELSE_IF_CALL("lastsave", "LASTSAVE");
-    PHP_HIREDIS_ELSE_IF_CALL("lindex", "LINDEX");
-    PHP_HIREDIS_ELSE_IF_CALL("linsert", "LINSERT");
-    PHP_HIREDIS_ELSE_IF_CALL("llen", "LLEN");
-    PHP_HIREDIS_ELSE_IF_CALL("lpop", "LPOP");
-    PHP_HIREDIS_ELSE_IF_CALL("lpush", "LPUSH");
-    PHP_HIREDIS_ELSE_IF_CALL("lpushx", "LPUSHX");
-    PHP_HIREDIS_ELSE_IF_CALL("lrange", "LRANGE");
-    PHP_HIREDIS_ELSE_IF_CALL("lrem", "LREM");
-    PHP_HIREDIS_ELSE_IF_CALL("lset", "LSET");
-    PHP_HIREDIS_ELSE_IF_CALL("ltrim", "LTRIM");
-    PHP_HIREDIS_ELSE_IF_CALL("mget", "MGET");
-    PHP_HIREDIS_ELSE_IF_CALL("migrate", "MIGRATE");
-    PHP_HIREDIS_ELSE_IF_CALL("monitor", "MONITOR");
-    PHP_HIREDIS_ELSE_IF_CALL("move", "MOVE");
-    PHP_HIREDIS_ELSE_IF_CALL("mset", "MSET");
-    PHP_HIREDIS_ELSE_IF_CALL("msetnx", "MSETNX");
-    PHP_HIREDIS_ELSE_IF_CALL("multi", "MULTI");
-    PHP_HIREDIS_ELSE_IF_CALL("object", "OBJECT");
-    PHP_HIREDIS_ELSE_IF_CALL("persist", "PERSIST");
-    PHP_HIREDIS_ELSE_IF_CALL("pexpire", "PEXPIRE");
-    PHP_HIREDIS_ELSE_IF_CALL("pexpireat", "PEXPIREAT");
-    PHP_HIREDIS_ELSE_IF_CALL("pfadd", "PFADD");
-    PHP_HIREDIS_ELSE_IF_CALL("pfcount", "PFCOUNT");
-    PHP_HIREDIS_ELSE_IF_CALL("pfmerge", "PFMERGE");
-    PHP_HIREDIS_ELSE_IF_CALL("ping", "PING");
-    PHP_HIREDIS_ELSE_IF_CALL("psetex", "PSETEX");
-    PHP_HIREDIS_ELSE_IF_CALL("psubscribe", "PSUBSCRIBE");
-    PHP_HIREDIS_ELSE_IF_CALL("pttl", "PTTL");
-    PHP_HIREDIS_ELSE_IF_CALL("publish", "PUBLISH");
-    PHP_HIREDIS_ELSE_IF_CALL("pubsub", "PUBSUB");
-    PHP_HIREDIS_ELSE_IF_CALL("punsubscribe", "PUNSUBSCRIBE");
-    PHP_HIREDIS_ELSE_IF_CALL("quit", "QUIT");
-    PHP_HIREDIS_ELSE_IF_CALL("randomkey", "RANDOMKEY");
-    PHP_HIREDIS_ELSE_IF_CALL("rename", "RENAME");
-    PHP_HIREDIS_ELSE_IF_CALL("renamenx", "RENAMENX");
-    PHP_HIREDIS_ELSE_IF_CALL("restore", "RESTORE");
-    PHP_HIREDIS_ELSE_IF_CALL("role", "ROLE");
-    PHP_HIREDIS_ELSE_IF_CALL("rpop", "RPOP");
-    PHP_HIREDIS_ELSE_IF_CALL("rpoplpush", "RPOPLPUSH");
-    PHP_HIREDIS_ELSE_IF_CALL("rpush", "RPUSH");
-    PHP_HIREDIS_ELSE_IF_CALL("rpushx", "RPUSHX");
-    PHP_HIREDIS_ELSE_IF_CALL("sadd", "SADD");
-    PHP_HIREDIS_ELSE_IF_CALL("save", "SAVE");
-    PHP_HIREDIS_ELSE_IF_CALL("scan", "SCAN");
-    PHP_HIREDIS_ELSE_IF_CALL("scard", "SCARD");
-    PHP_HIREDIS_ELSE_IF_CALL("script", "SCRIPT");
-    PHP_HIREDIS_ELSE_IF_CALL("sdiff", "SDIFF");
-    PHP_HIREDIS_ELSE_IF_CALL("sdiffstore", "SDIFFSTORE");
-    PHP_HIREDIS_ELSE_IF_CALL("select", "SELECT");
-    PHP_HIREDIS_ELSE_IF_CALL("set", "SET");
-    PHP_HIREDIS_ELSE_IF_CALL("setbit", "SETBIT");
-    PHP_HIREDIS_ELSE_IF_CALL("setex", "SETEX");
-    PHP_HIREDIS_ELSE_IF_CALL("setnx", "SETNX");
-    PHP_HIREDIS_ELSE_IF_CALL("setrange", "SETRANGE");
-    PHP_HIREDIS_ELSE_IF_CALL("shutdown", "SHUTDOWN");
-    PHP_HIREDIS_ELSE_IF_CALL("sinter", "SINTER");
-    PHP_HIREDIS_ELSE_IF_CALL("sinterstore", "SINTERSTORE");
-    PHP_HIREDIS_ELSE_IF_CALL("sismember", "SISMEMBER");
-    PHP_HIREDIS_ELSE_IF_CALL("slaveof", "SLAVEOF");
-    PHP_HIREDIS_ELSE_IF_CALL("slowlog", "SLOWLOG");
-    PHP_HIREDIS_ELSE_IF_CALL("smembers", "SMEMBERS");
-    PHP_HIREDIS_ELSE_IF_CALL("smove", "SMOVE");
-    PHP_HIREDIS_ELSE_IF_CALL("sort", "SORT");
-    PHP_HIREDIS_ELSE_IF_CALL("spop", "SPOP");
-    PHP_HIREDIS_ELSE_IF_CALL("srandmember", "SRANDMEMBER");
-    PHP_HIREDIS_ELSE_IF_CALL("srem", "SREM");
-    PHP_HIREDIS_ELSE_IF_CALL("sscan", "SSCAN");
-    PHP_HIREDIS_ELSE_IF_CALL("strlen", "STRLEN");
-    PHP_HIREDIS_ELSE_IF_CALL("subscribe", "SUBSCRIBE");
-    PHP_HIREDIS_ELSE_IF_CALL("sunion", "SUNION");
-    PHP_HIREDIS_ELSE_IF_CALL("sunionstore", "SUNIONSTORE");
-    PHP_HIREDIS_ELSE_IF_CALL("sync", "SYNC");
-    PHP_HIREDIS_ELSE_IF_CALL("time", "TIME");
-    PHP_HIREDIS_ELSE_IF_CALL("ttl", "TTL");
-    PHP_HIREDIS_ELSE_IF_CALL("type", "TYPE");
-    PHP_HIREDIS_ELSE_IF_CALL("unsubscribe", "UNSUBSCRIBE");
-    PHP_HIREDIS_ELSE_IF_CALL("unwatch", "UNWATCH");
-    PHP_HIREDIS_ELSE_IF_CALL("wait", "WAIT");
-    PHP_HIREDIS_ELSE_IF_CALL("watch", "WATCH");
-    PHP_HIREDIS_ELSE_IF_CALL("zadd", "ZADD");
-    PHP_HIREDIS_ELSE_IF_CALL("zcard", "ZCARD");
-    PHP_HIREDIS_ELSE_IF_CALL("zcount", "ZCOUNT");
-    PHP_HIREDIS_ELSE_IF_CALL("zincrby", "ZINCRBY");
-    PHP_HIREDIS_ELSE_IF_CALL("zinterstore", "ZINTERSTORE");
-    PHP_HIREDIS_ELSE_IF_CALL("zlexcount", "ZLEXCOUNT");
-    PHP_HIREDIS_ELSE_IF_CALL("zrange", "ZRANGE");
-    PHP_HIREDIS_ELSE_IF_CALL("zrangebylex", "ZRANGEBYLEX");
-    PHP_HIREDIS_ELSE_IF_CALL("zrangebyscore", "ZRANGEBYSCORE");
-    PHP_HIREDIS_ELSE_IF_CALL("zrank", "ZRANK");
-    PHP_HIREDIS_ELSE_IF_CALL("zrem", "ZREM");
-    PHP_HIREDIS_ELSE_IF_CALL("zremrangebylex", "ZREMRANGEBYLEX");
-    PHP_HIREDIS_ELSE_IF_CALL("zremrangebyrank", "ZREMRANGEBYRANK");
-    PHP_HIREDIS_ELSE_IF_CALL("zremrangebyscore", "ZREMRANGEBYSCORE");
-    PHP_HIREDIS_ELSE_IF_CALL("zrevrange", "ZREVRANGE");
-    PHP_HIREDIS_ELSE_IF_CALL("zrevrangebylex", "ZREVRANGEBYLEX");
-    PHP_HIREDIS_ELSE_IF_CALL("zrevrangebyscore", "ZREVRANGEBYSCORE");
-    PHP_HIREDIS_ELSE_IF_CALL("zrevrank", "ZREVRANK");
-    PHP_HIREDIS_ELSE_IF_CALL("zscan", "ZSCAN");
-    PHP_HIREDIS_ELSE_IF_CALL("zscore", "ZSCORE");
-    PHP_HIREDIS_ELSE_IF_CALL("zunionstore", "ZUNIONSTORE");
+    if (cmd = zend_hash_str_find_ptr(&func_cmd_map, func, func_len)) {
+        _hiredis_convert_zval_to_array_of_zvals(func_args, &func_args, &func_argc);
+        _hiredis_command_array(INTERNAL_FUNCTION_PARAM_PASSTHRU, client, cmd, func_args, func_argc, 0);
+        efree(func_args);
     } else {
         zend_throw_error(NULL, "Call to undefined method Hiredis::%s()", func);
     }
-
-    #undef PHP_HIREDIS_ELSE_IF_CALL
-
-    efree(func_args);
 }
 /* }}} */
 
@@ -834,6 +668,7 @@ PHP_MINFO_FUNCTION(hiredis) {
 PHP_MINIT_FUNCTION(hiredis) {
     zend_class_entry ce;
 
+    // Register Hiredis class
     INIT_CLASS_ENTRY(ce, "Hiredis", hiredis_methods);
     hiredis_ce = zend_register_internal_class(&ce);
     hiredis_ce->create_object = hiredis_obj_new;
@@ -841,8 +676,176 @@ PHP_MINIT_FUNCTION(hiredis) {
     hiredis_obj_handlers.offset = XtOffsetOf(hiredis_t, std);
     hiredis_obj_handlers.free_obj = hiredis_obj_free;
 
+    // Register HiredisException class
     INIT_CLASS_ENTRY(ce, "HiredisException", NULL);
     hiredis_exception_ce = zend_register_internal_class_ex(&ce, zend_ce_exception);
+
+    // Init func_cmd_map for __call
+    zend_hash_init(&func_cmd_map, 0, NULL, NULL, 1);
+    #define PHP_HIREDIS_MAP_FUNC_CMD(pfunc, pcmd) \
+       zend_hash_str_add_ptr(&func_cmd_map, (pfunc), sizeof((pfunc))-1, (pcmd));
+    PHP_HIREDIS_MAP_FUNC_CMD("append", "APPEND");
+    PHP_HIREDIS_MAP_FUNC_CMD("auth", "AUTH");
+    PHP_HIREDIS_MAP_FUNC_CMD("bgrewriteaof", "BGREWRITEAOF");
+    PHP_HIREDIS_MAP_FUNC_CMD("bgsave", "BGSAVE");
+    PHP_HIREDIS_MAP_FUNC_CMD("bitcount", "BITCOUNT");
+    PHP_HIREDIS_MAP_FUNC_CMD("bitop", "BITOP");
+    PHP_HIREDIS_MAP_FUNC_CMD("bitpos", "BITPOS");
+    PHP_HIREDIS_MAP_FUNC_CMD("blpop", "BLPOP");
+    PHP_HIREDIS_MAP_FUNC_CMD("brpop", "BRPOP");
+    PHP_HIREDIS_MAP_FUNC_CMD("brpoplpush", "BRPOPLPUSH");
+    PHP_HIREDIS_MAP_FUNC_CMD("client", "CLIENT");
+    PHP_HIREDIS_MAP_FUNC_CMD("cluster", "CLUSTER");
+    PHP_HIREDIS_MAP_FUNC_CMD("command", "COMMAND");
+    PHP_HIREDIS_MAP_FUNC_CMD("config", "CONFIG");
+    PHP_HIREDIS_MAP_FUNC_CMD("dbsize", "DBSIZE");
+    PHP_HIREDIS_MAP_FUNC_CMD("debug", "DEBUG");
+    PHP_HIREDIS_MAP_FUNC_CMD("decr", "DECR");
+    PHP_HIREDIS_MAP_FUNC_CMD("decrby", "DECRBY");
+    PHP_HIREDIS_MAP_FUNC_CMD("del", "DEL");
+    PHP_HIREDIS_MAP_FUNC_CMD("discard", "DISCARD");
+    PHP_HIREDIS_MAP_FUNC_CMD("dump", "DUMP");
+    PHP_HIREDIS_MAP_FUNC_CMD("echo", "ECHO");
+    PHP_HIREDIS_MAP_FUNC_CMD("eval", "EVAL");
+    PHP_HIREDIS_MAP_FUNC_CMD("evalsha", "EVALSHA");
+    PHP_HIREDIS_MAP_FUNC_CMD("exec", "EXEC");
+    PHP_HIREDIS_MAP_FUNC_CMD("exists", "EXISTS");
+    PHP_HIREDIS_MAP_FUNC_CMD("expire", "EXPIRE");
+    PHP_HIREDIS_MAP_FUNC_CMD("expireat", "EXPIREAT");
+    PHP_HIREDIS_MAP_FUNC_CMD("flushall", "FLUSHALL");
+    PHP_HIREDIS_MAP_FUNC_CMD("flushdb", "FLUSHDB");
+    PHP_HIREDIS_MAP_FUNC_CMD("geoadd", "GEOADD");
+    PHP_HIREDIS_MAP_FUNC_CMD("geodist", "GEODIST");
+    PHP_HIREDIS_MAP_FUNC_CMD("geohash", "GEOHASH");
+    PHP_HIREDIS_MAP_FUNC_CMD("geopos", "GEOPOS");
+    PHP_HIREDIS_MAP_FUNC_CMD("georadius", "GEORADIUS");
+    PHP_HIREDIS_MAP_FUNC_CMD("georadiusbymember", "GEORADIUSBYMEMBER");
+    PHP_HIREDIS_MAP_FUNC_CMD("get", "GET");
+    PHP_HIREDIS_MAP_FUNC_CMD("getbit", "GETBIT");
+    PHP_HIREDIS_MAP_FUNC_CMD("getrange", "GETRANGE");
+    PHP_HIREDIS_MAP_FUNC_CMD("getset", "GETSET");
+    PHP_HIREDIS_MAP_FUNC_CMD("hdel", "HDEL");
+    PHP_HIREDIS_MAP_FUNC_CMD("hexists", "HEXISTS");
+    PHP_HIREDIS_MAP_FUNC_CMD("hget", "HGET");
+    PHP_HIREDIS_MAP_FUNC_CMD("hgetall", "HGETALL");
+    PHP_HIREDIS_MAP_FUNC_CMD("hincrby", "HINCRBY");
+    PHP_HIREDIS_MAP_FUNC_CMD("hincrbyfloat", "HINCRBYFLOAT");
+    PHP_HIREDIS_MAP_FUNC_CMD("hkeys", "HKEYS");
+    PHP_HIREDIS_MAP_FUNC_CMD("hlen", "HLEN");
+    PHP_HIREDIS_MAP_FUNC_CMD("hmget", "HMGET");
+    PHP_HIREDIS_MAP_FUNC_CMD("hmset", "HMSET");
+    PHP_HIREDIS_MAP_FUNC_CMD("hscan", "HSCAN");
+    PHP_HIREDIS_MAP_FUNC_CMD("hset", "HSET");
+    PHP_HIREDIS_MAP_FUNC_CMD("hsetnx", "HSETNX");
+    PHP_HIREDIS_MAP_FUNC_CMD("hstrlen", "HSTRLEN");
+    PHP_HIREDIS_MAP_FUNC_CMD("hvals", "HVALS");
+    PHP_HIREDIS_MAP_FUNC_CMD("incr", "INCR");
+    PHP_HIREDIS_MAP_FUNC_CMD("incrby", "INCRBY");
+    PHP_HIREDIS_MAP_FUNC_CMD("incrbyfloat", "INCRBYFLOAT");
+    PHP_HIREDIS_MAP_FUNC_CMD("info", "INFO");
+    PHP_HIREDIS_MAP_FUNC_CMD("keys", "KEYS");
+    PHP_HIREDIS_MAP_FUNC_CMD("lastsave", "LASTSAVE");
+    PHP_HIREDIS_MAP_FUNC_CMD("lindex", "LINDEX");
+    PHP_HIREDIS_MAP_FUNC_CMD("linsert", "LINSERT");
+    PHP_HIREDIS_MAP_FUNC_CMD("llen", "LLEN");
+    PHP_HIREDIS_MAP_FUNC_CMD("lpop", "LPOP");
+    PHP_HIREDIS_MAP_FUNC_CMD("lpush", "LPUSH");
+    PHP_HIREDIS_MAP_FUNC_CMD("lpushx", "LPUSHX");
+    PHP_HIREDIS_MAP_FUNC_CMD("lrange", "LRANGE");
+    PHP_HIREDIS_MAP_FUNC_CMD("lrem", "LREM");
+    PHP_HIREDIS_MAP_FUNC_CMD("lset", "LSET");
+    PHP_HIREDIS_MAP_FUNC_CMD("ltrim", "LTRIM");
+    PHP_HIREDIS_MAP_FUNC_CMD("mget", "MGET");
+    PHP_HIREDIS_MAP_FUNC_CMD("migrate", "MIGRATE");
+    PHP_HIREDIS_MAP_FUNC_CMD("monitor", "MONITOR");
+    PHP_HIREDIS_MAP_FUNC_CMD("move", "MOVE");
+    PHP_HIREDIS_MAP_FUNC_CMD("mset", "MSET");
+    PHP_HIREDIS_MAP_FUNC_CMD("msetnx", "MSETNX");
+    PHP_HIREDIS_MAP_FUNC_CMD("multi", "MULTI");
+    PHP_HIREDIS_MAP_FUNC_CMD("object", "OBJECT");
+    PHP_HIREDIS_MAP_FUNC_CMD("persist", "PERSIST");
+    PHP_HIREDIS_MAP_FUNC_CMD("pexpire", "PEXPIRE");
+    PHP_HIREDIS_MAP_FUNC_CMD("pexpireat", "PEXPIREAT");
+    PHP_HIREDIS_MAP_FUNC_CMD("pfadd", "PFADD");
+    PHP_HIREDIS_MAP_FUNC_CMD("pfcount", "PFCOUNT");
+    PHP_HIREDIS_MAP_FUNC_CMD("pfmerge", "PFMERGE");
+    PHP_HIREDIS_MAP_FUNC_CMD("ping", "PING");
+    PHP_HIREDIS_MAP_FUNC_CMD("psetex", "PSETEX");
+    PHP_HIREDIS_MAP_FUNC_CMD("psubscribe", "PSUBSCRIBE");
+    PHP_HIREDIS_MAP_FUNC_CMD("pttl", "PTTL");
+    PHP_HIREDIS_MAP_FUNC_CMD("publish", "PUBLISH");
+    PHP_HIREDIS_MAP_FUNC_CMD("pubsub", "PUBSUB");
+    PHP_HIREDIS_MAP_FUNC_CMD("punsubscribe", "PUNSUBSCRIBE");
+    PHP_HIREDIS_MAP_FUNC_CMD("quit", "QUIT");
+    PHP_HIREDIS_MAP_FUNC_CMD("randomkey", "RANDOMKEY");
+    PHP_HIREDIS_MAP_FUNC_CMD("rename", "RENAME");
+    PHP_HIREDIS_MAP_FUNC_CMD("renamenx", "RENAMENX");
+    PHP_HIREDIS_MAP_FUNC_CMD("restore", "RESTORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("role", "ROLE");
+    PHP_HIREDIS_MAP_FUNC_CMD("rpop", "RPOP");
+    PHP_HIREDIS_MAP_FUNC_CMD("rpoplpush", "RPOPLPUSH");
+    PHP_HIREDIS_MAP_FUNC_CMD("rpush", "RPUSH");
+    PHP_HIREDIS_MAP_FUNC_CMD("rpushx", "RPUSHX");
+    PHP_HIREDIS_MAP_FUNC_CMD("sadd", "SADD");
+    PHP_HIREDIS_MAP_FUNC_CMD("save", "SAVE");
+    PHP_HIREDIS_MAP_FUNC_CMD("scan", "SCAN");
+    PHP_HIREDIS_MAP_FUNC_CMD("scard", "SCARD");
+    PHP_HIREDIS_MAP_FUNC_CMD("script", "SCRIPT");
+    PHP_HIREDIS_MAP_FUNC_CMD("sdiff", "SDIFF");
+    PHP_HIREDIS_MAP_FUNC_CMD("sdiffstore", "SDIFFSTORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("select", "SELECT");
+    PHP_HIREDIS_MAP_FUNC_CMD("set", "SET");
+    PHP_HIREDIS_MAP_FUNC_CMD("setbit", "SETBIT");
+    PHP_HIREDIS_MAP_FUNC_CMD("setex", "SETEX");
+    PHP_HIREDIS_MAP_FUNC_CMD("setnx", "SETNX");
+    PHP_HIREDIS_MAP_FUNC_CMD("setrange", "SETRANGE");
+    PHP_HIREDIS_MAP_FUNC_CMD("shutdown", "SHUTDOWN");
+    PHP_HIREDIS_MAP_FUNC_CMD("sinter", "SINTER");
+    PHP_HIREDIS_MAP_FUNC_CMD("sinterstore", "SINTERSTORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("sismember", "SISMEMBER");
+    PHP_HIREDIS_MAP_FUNC_CMD("slaveof", "SLAVEOF");
+    PHP_HIREDIS_MAP_FUNC_CMD("slowlog", "SLOWLOG");
+    PHP_HIREDIS_MAP_FUNC_CMD("smembers", "SMEMBERS");
+    PHP_HIREDIS_MAP_FUNC_CMD("smove", "SMOVE");
+    PHP_HIREDIS_MAP_FUNC_CMD("sort", "SORT");
+    PHP_HIREDIS_MAP_FUNC_CMD("spop", "SPOP");
+    PHP_HIREDIS_MAP_FUNC_CMD("srandmember", "SRANDMEMBER");
+    PHP_HIREDIS_MAP_FUNC_CMD("srem", "SREM");
+    PHP_HIREDIS_MAP_FUNC_CMD("sscan", "SSCAN");
+    PHP_HIREDIS_MAP_FUNC_CMD("strlen", "STRLEN");
+    PHP_HIREDIS_MAP_FUNC_CMD("subscribe", "SUBSCRIBE");
+    PHP_HIREDIS_MAP_FUNC_CMD("sunion", "SUNION");
+    PHP_HIREDIS_MAP_FUNC_CMD("sunionstore", "SUNIONSTORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("sync", "SYNC");
+    PHP_HIREDIS_MAP_FUNC_CMD("time", "TIME");
+    PHP_HIREDIS_MAP_FUNC_CMD("ttl", "TTL");
+    PHP_HIREDIS_MAP_FUNC_CMD("type", "TYPE");
+    PHP_HIREDIS_MAP_FUNC_CMD("unsubscribe", "UNSUBSCRIBE");
+    PHP_HIREDIS_MAP_FUNC_CMD("unwatch", "UNWATCH");
+    PHP_HIREDIS_MAP_FUNC_CMD("wait", "WAIT");
+    PHP_HIREDIS_MAP_FUNC_CMD("watch", "WATCH");
+    PHP_HIREDIS_MAP_FUNC_CMD("zadd", "ZADD");
+    PHP_HIREDIS_MAP_FUNC_CMD("zcard", "ZCARD");
+    PHP_HIREDIS_MAP_FUNC_CMD("zcount", "ZCOUNT");
+    PHP_HIREDIS_MAP_FUNC_CMD("zincrby", "ZINCRBY");
+    PHP_HIREDIS_MAP_FUNC_CMD("zinterstore", "ZINTERSTORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("zlexcount", "ZLEXCOUNT");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrange", "ZRANGE");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrangebylex", "ZRANGEBYLEX");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrangebyscore", "ZRANGEBYSCORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrank", "ZRANK");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrem", "ZREM");
+    PHP_HIREDIS_MAP_FUNC_CMD("zremrangebylex", "ZREMRANGEBYLEX");
+    PHP_HIREDIS_MAP_FUNC_CMD("zremrangebyrank", "ZREMRANGEBYRANK");
+    PHP_HIREDIS_MAP_FUNC_CMD("zremrangebyscore", "ZREMRANGEBYSCORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrevrange", "ZREVRANGE");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrevrangebylex", "ZREVRANGEBYLEX");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrevrangebyscore", "ZREVRANGEBYSCORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("zrevrank", "ZREVRANK");
+    PHP_HIREDIS_MAP_FUNC_CMD("zscan", "ZSCAN");
+    PHP_HIREDIS_MAP_FUNC_CMD("zscore", "ZSCORE");
+    PHP_HIREDIS_MAP_FUNC_CMD("zunionstore", "ZUNIONSTORE");
+    #undef PHP_HIREDIS_MAP_FUNC_CMD
 }
 /* }}} */
 
