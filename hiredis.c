@@ -36,8 +36,6 @@
 
 #include <hiredis.h>
 
-#define Z_HIREDIS_P(zv) hiredis_obj_fetch(Z_OBJ_P((zv)))
-
 static zend_object_handlers hiredis_obj_handlers;
 static zend_class_entry *hiredis_ce;
 static zend_class_entry *hiredis_exception_ce;
@@ -84,6 +82,13 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_set_throw_exceptions, 0, 0, 1)
     ZEND_ARG_INFO(0, true_or_false)
 ZEND_END_ARG_INFO()
 
+/* Macro to get hiredis_t from zval */
+#if PHP_MAJOR_VERSION >= 7
+#define Z_HIREDIS_P(zv) hiredis_obj_fetch(Z_OBJ_P((zv)))
+#else
+#define Z_HIREDIS_P(zv) hiredis_obj_fetch(zv TSRMLS_CC)
+#endif
+
 /* Macro to set custom err and errstr together */
 #define PHP_HIREDIS_SET_ERROR_EX(client, perr, perrstr) do { \
     (client)->err = (perr); \
@@ -109,22 +114,54 @@ ZEND_END_ARG_INFO()
 /* Macro to handle returning/throwing a zval to userland */
 #define PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, zv) do { \
     if (Z_TYPE_P(zv) == IS_OBJECT && instanceof_function(Z_OBJCE_P(zv), hiredis_exception_ce)) { \
-        zval _z = {0}; \
-        zval* _zp = NULL; \
-        _zp = zend_read_property(hiredis_exception_ce, (zv), "message", sizeof("message")-1, 1, &_z); \
-        PHP_HIREDIS_SET_ERROR_EX((client), REDIS_ERR, Z_STRVAL_P(_zp)); \
+        PHP_HIREDIS_SET_ERROR_EX((client), REDIS_ERR, _hidreis_get_exception_message(zv)); \
         RETVAL_FALSE; \
     } else { \
         RETVAL_ZVAL((zv), 0, 0); \
     } \
 } while(0)
 
-/* Fetch hiredis_t inside zend_object */
-static inline hiredis_t* hiredis_obj_fetch(zend_object *obj) {
-    return (hiredis_t*)((char*)(obj) - XtOffsetOf(hiredis_t, std));
+/* Return exception message */
+static char* _hidreis_get_exception_message(zval* ex) {
+    zval* zp = NULL;
+    #if PHP_MAJOR_VERSION >= 7
+        zval z = {0};
+        zp = zend_read_property(hiredis_exception_ce, ex, "message", sizeof("message")-1, 1, &z);
+    #else
+        zp = zend_read_property(hiredis_exception_ce, ex, "message", sizeof("message")-1, 1);
+    #endif
+    return Z_STRVAL_P(zp);
 }
 
-/* Allocate new hiredis zend_object */
+/* Fetch hiredis_t inside zval */
+#if PHP_MAJOR_VERSION >= 7
+static inline hiredis_t* hiredis_obj_fetch(zend_object* obj) {
+    return (hiredis_t*)((char*)(obj) - XtOffsetOf(hiredis_t, std));
+}
+#else
+static inline hiredis_t* hiredis_obj_fetch(zval* obj TSRMLS_DC) {
+    return (hiredis_t*)zend_object_store_get_object(obj TSRMLS_CC);
+}
+#endif
+
+/* Allocate/deallocate hiredis_t object */
+#if PHP_MAJOR_VERSION >= 7
+static void hiredis_obj_free(zend_object *object) {
+    hiredis_t* client;
+    #if PHP_MAJOR_VERSION >= 7
+        client = hiredis_obj_fetch(object);
+    #else
+        client = hiredis_obj_fetch(object);
+    #endif
+    if (!client) {
+        return;
+    }
+    if (client->ctx) {
+        redisFree(client->ctx);
+    }
+    zend_object_std_dtor(&client->std);
+    efree(client);
+}
 static inline zend_object* hiredis_obj_new(zend_class_entry *ce) {
     hiredis_t* client;
     client = ecalloc(1, sizeof(hiredis_t) + zend_object_properties_size(ce));
@@ -133,22 +170,33 @@ static inline zend_object* hiredis_obj_new(zend_class_entry *ce) {
     client->std.handlers = &hiredis_obj_handlers;
     return &client->std;
 }
-
-/* Throw errstr as exception */
-static void _hiredis_throw_err_exception(hiredis_t* client) {
-    zend_throw_exception(hiredis_exception_ce, client->errstr, client->err);
-}
-
-/* Free hiredis zend_object */
-static void hiredis_obj_free(zend_object *object) {
-    hiredis_t* client = hiredis_obj_fetch(object);
+#else
+static void hiredis_obj_free(void *obj TSRMLS_DC) {
+    hiredis_t *client = (hiredis_t*)obj;
     if (!client) {
         return;
     }
     if (client->ctx) {
         redisFree(client->ctx);
     }
-    zend_object_std_dtor(&client->std);
+    zend_object_std_dtor(&client->std TSRMLS_CC);
+    efree(client);
+}
+static inline zend_object_value hiredis_obj_new(zend_class_entry *ce TSRMLS_DC) {
+    hiredis_t* client;
+    zend_object_value retval;
+    client = ecalloc(1, sizeof(hiredis_t) + zend_object_properties_size(ce));
+    zend_object_std_init(&client->std, ce);
+    object_properties_init(&client->std, ce);
+    retval.handle = zend_objects_store_put(client, NULL, hiredis_obj_free, NULL TSRMLS_CC);
+    retval.handlers = (zend_object_handlers*)&hiredis_obj_handlers;
+    return retval;
+}
+#endif
+
+/* Throw errstr as exception */
+static void _hiredis_throw_err_exception(hiredis_t* client) {
+    zend_throw_exception(hiredis_exception_ce, client->errstr, client->err);
 }
 
 /* Wrap redisSetTimeout */
@@ -189,7 +237,11 @@ static void* hiredis_replyobj_create_string(const redisReadTask* task, char* str
         object_init_ex(z, hiredis_exception_ce);
         zend_update_property_stringl(hiredis_exception_ce, z, "message", sizeof("message")-1, str, len);
     } else {
+        #if PHP_MAJOR_VERSION >= 7
         ZVAL_STRINGL(z, str, len);
+        #else
+        ZVAL_STRINGL(z, str, len, 1);
+        #endif
     }
     _hiredis_replyobj_nest(task, z);
     return (void*)z;
@@ -240,16 +292,28 @@ static void _hiredis_convert_zval_to_array_of_zvals(zval* arr, zval** ret_zvals,
     int argc;
     int i;
     if (Z_TYPE_P(arr) != IS_ARRAY) {
-        SEPARATE_ZVAL(arr);
         convert_to_array(arr);
     }
     argc = zend_hash_num_elements(Z_ARRVAL_P(arr));
     zvals = (zval*)safe_emalloc(argc, sizeof(zval), 0);
     i = 0;
-    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(arr), zv) {
-        ZVAL_COPY_VALUE(&zvals[i], zv);
-        i++;
-    } ZEND_HASH_FOREACH_END();
+
+    #if PHP_MAJOR_VERSION >= 7
+        ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(arr), zv) {
+            ZVAL_COPY_VALUE(&zvals[i], zv);
+            i++;
+        } ZEND_HASH_FOREACH_END();
+    #else
+        HashPosition hash_pos = NULL;
+        zval** hash_entry = NULL;
+        zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(arr), &hash_pos);
+        while (zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void**)&hash_entry, &hash_pos) == SUCCESS) {
+            ZVAL_COPY_VALUE(&zvals[i], *hash_entry);
+            i++;
+            zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &hash_pos);
+        }
+    #endif
+
     *ret_zvals = zvals;
     *ret_num_zvals = argc;
 }
@@ -276,7 +340,12 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
         j++;
     }
     for (i = 0; i < argc; i++, j++) {
-        convert_to_string_ex(&args[i]);
+        #if PHP_MAJOR_VERSION >= 7
+            convert_to_string_ex(&args[i]);
+        #else
+            zval* _zp = &args[i];
+            convert_to_string_ex(&_zp);
+        #endif
         string_args[j] = Z_STRVAL_P(&args[i]);
         string_lens[j] = Z_STRLEN_P(&args[i]);
     }
@@ -290,8 +359,8 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
             RETVAL_TRUE;
         }
     } else {
-        if (zv = redisCommandArgv(client->ctx, num_strings, (const char**)string_args, string_lens)) {
-            PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, (zval*)zv);
+        if (zv = (zval*)redisCommandArgv(client->ctx, num_strings, (const char**)string_args, string_lens)) {
+            PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, zv);
         } else {
             PHP_HIREDIS_SET_ERROR(client);
             RETVAL_FALSE;
@@ -384,7 +453,7 @@ PHP_METHOD(Hiredis, __destruct) {
 PHP_METHOD(Hiredis, __call) {
     hiredis_t* client;
     char* func;
-    char* cmd;
+    char* cmd = NULL;
     size_t func_len;
     zval* func_args;
     int func_argc;
@@ -396,7 +465,15 @@ PHP_METHOD(Hiredis, __call) {
     client = Z_HIREDIS_P(getThis());
     PHP_HIREDIS_ENSURE_CTX(client);
 
-    if (cmd = zend_hash_str_find_ptr(&func_cmd_map, func, func_len)) {
+    #if PHP_MAJOR_VERSION >= 7
+        cmd = zend_hash_str_find_ptr(&func_cmd_map, func, func_len);
+    #else
+        zval** zpp;
+        if (SUCCESS == zend_hash_find(&func_cmd_map, func, func_len, (void**)&zpp)) {
+            cmd = Z_STRVAL_PP(zpp);
+        }
+    #endif
+    if (cmd) {
         _hiredis_convert_zval_to_array_of_zvals(func_args, &func_args, &func_argc);
         _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAM_PASSTHRU, client, cmd, func_args, func_argc, 0);
         efree(func_args);
@@ -645,17 +722,17 @@ PHP_FUNCTION(hiredis_append_command_array) {
 PHP_FUNCTION(hiredis_get_reply) {
     zval* zobj;
     hiredis_t* client;
-    void* reply = NULL;
+    zval* reply = NULL;
     if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "O", &zobj, hiredis_ce) == FAILURE) {
         RETURN_FALSE;
     }
     client = Z_HIREDIS_P(zobj);
     PHP_HIREDIS_ENSURE_CTX(client);
-    if (REDIS_OK != redisGetReply(client->ctx, &reply)) {
+    if (REDIS_OK != redisGetReply(client->ctx, (void*)&reply)) {
         PHP_HIREDIS_SET_ERROR(client);
         RETURN_FALSE;
     } else if (reply) {
-        PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, (zval*)reply);
+        PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, reply);
     } else {
         PHP_HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisGetReply returned NULL");
         RETURN_FALSE;
@@ -673,7 +750,11 @@ PHP_FUNCTION(hiredis_get_last_error) {
     }
     client = Z_HIREDIS_P(zobj);
     if (client->err) {
-        RETURN_STRING(client->errstr);
+        #if PHP_MAJOR_VERSION >= 7
+            RETURN_STRING(client->errstr);
+        #else
+            RETURN_STRING(client->errstr, 1);
+        #endif
     }
     RETURN_NULL();
 }
@@ -729,12 +810,18 @@ PHP_MINIT_FUNCTION(hiredis) {
     hiredis_ce = zend_register_internal_class(&ce);
     hiredis_ce->create_object = hiredis_obj_new;
     memcpy(&hiredis_obj_handlers, zend_get_std_object_handlers(), sizeof(hiredis_obj_handlers));
-    hiredis_obj_handlers.offset = XtOffsetOf(hiredis_t, std);
-    hiredis_obj_handlers.free_obj = hiredis_obj_free;
+    #if PHP_MAJOR_VERSION >= 7
+        hiredis_obj_handlers.offset = XtOffsetOf(hiredis_t, std);
+        hiredis_obj_handlers.free_obj = hiredis_obj_free;
+    #endif
 
     // Register HiredisException class
     INIT_CLASS_ENTRY(ce, "HiredisException", NULL);
-    hiredis_exception_ce = zend_register_internal_class_ex(&ce, zend_ce_exception);
+    #if PHP_MAJOR_VERSION >= 7
+        hiredis_exception_ce = zend_register_internal_class_ex(&ce, zend_ce_exception);
+    #else
+        hiredis_exception_ce = zend_register_internal_class_ex(&ce, NULL, NULL TSRMLS_CC);
+    #endif
 
     // Init func_cmd_map for __call
     zend_hash_init(&func_cmd_map, 0, NULL, NULL, 1);
