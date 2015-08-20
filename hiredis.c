@@ -186,9 +186,9 @@ static void hiredis_obj_free(void *obj TSRMLS_DC) {
 static inline zend_object_value hiredis_obj_new(zend_class_entry *ce TSRMLS_DC) {
     hiredis_t* client;
     zend_object_value retval;
-    client = ecalloc(1, sizeof(hiredis_t) + zend_object_properties_size(ce));
-    zend_object_std_init(&client->std, ce);
-    object_properties_init(&client->std, ce);
+    client = ecalloc(1, sizeof(hiredis_t));
+    zend_object_std_init(&client->std, ce TSRMLS_CC);
+    object_properties_init((zend_object*)client, ce);
     retval.handle = zend_objects_store_put(client, NULL, hiredis_obj_free, NULL TSRMLS_CC);
     retval.handlers = (zend_object_handlers*)&hiredis_obj_handlers;
     return retval;
@@ -377,10 +377,15 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
 static void _hiredis_send_raw(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is_append) {
     hiredis_t* client;
     zval* zobj;
-    zval* args;
     int argc;
+    zval* args;
+    #if PHP_MAJOR_VERSION >= 7
+        zval* varargs;
+    #else
+        zval*** varargs;
+    #endif
 
-    if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "O+", &zobj, hiredis_ce, &args, &argc) == FAILURE) {
+    if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "O+", &zobj, hiredis_ce, &varargs, &argc) == FAILURE) {
         RETURN_FALSE;
     }
     if ((is_array && argc != 1) || (!is_array && argc < 1)) {
@@ -390,9 +395,29 @@ static void _hiredis_send_raw(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is
     client = Z_HIREDIS_P(zobj);
     PHP_HIREDIS_ENSURE_CTX(client);
 
-    if (is_array) _hiredis_convert_zval_to_array_of_zvals(args, &args, &argc);
+    #if PHP_MAJOR_VERSION >= 7
+        if (is_array) {
+            _hiredis_convert_zval_to_array_of_zvals(varargs, &args, &argc);
+        } else {
+            args = varargs;
+        }
+    #else
+        if (is_array) {
+            _hiredis_convert_zval_to_array_of_zvals(**varargs, &args, &argc);
+        } else {
+            int i;
+            args = (zval*)safe_emalloc(argc, sizeof(zval), 0);
+            for (i = 0; i < argc; i++) memcpy(&args[i], *(varargs[i]), sizeof(zval));
+        }
+    #endif
+
     _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAM_PASSTHRU, client, NULL, args, argc, is_append);
-    if (is_array) efree(args);
+
+    #if PHP_MAJOR_VERSION >= 7
+        if (is_array) efree(args);
+    #else
+        efree(args);
+    #endif
 }
 
 /* Invoked after connecting */
@@ -469,9 +494,10 @@ PHP_METHOD(Hiredis, __call) {
     #if PHP_MAJOR_VERSION >= 7
         cmd = zend_hash_str_find_ptr(&func_cmd_map, func, func_len);
     #else
-        zval** zpp;
-        if (SUCCESS == zend_hash_find(&func_cmd_map, func, func_len, (void**)&zpp)) {
-            cmd = Z_STRVAL_PP(zpp);
+        // TODO This entire block feels wrong
+        void** data;
+        if (SUCCESS == zend_hash_find(&func_cmd_map, func, func_len, (void**)&data)) {
+            cmd = (char*)data;
         }
     #endif
     if (cmd) {
@@ -479,7 +505,11 @@ PHP_METHOD(Hiredis, __call) {
         _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAM_PASSTHRU, client, cmd, func_args, func_argc, 0);
         efree(func_args);
     } else {
-        zend_throw_error(NULL, "Call to undefined method Hiredis::%s()", func);
+        #if PHP_MAJOR_VERSION >= 7
+            zend_throw_error(NULL, "Call to undefined method Hiredis::%s()", func);
+        #else
+            zend_throw_exception_ex(NULL, 0 TSRMLS_CC, "Call to undefined method Hiredis::%s()", func);
+        #endif
     }
 }
 /* }}} */
@@ -812,8 +842,13 @@ PHP_MINIT_FUNCTION(hiredis) {
 
     // Register Hiredis class
     INIT_CLASS_ENTRY(ce, "Hiredis", hiredis_methods);
-    hiredis_ce = zend_register_internal_class(&ce);
-    hiredis_ce->create_object = hiredis_obj_new;
+    #if PHP_MAJOR_VERSION >= 7
+        hiredis_ce = zend_register_internal_class(&ce);
+        hiredis_ce->create_object = hiredis_obj_new;
+    #else
+        ce.create_object = hiredis_obj_new;
+        hiredis_ce = zend_register_internal_class(&ce TSRMLS_CC);
+    #endif
     memcpy(&hiredis_obj_handlers, zend_get_std_object_handlers(), sizeof(hiredis_obj_handlers));
     #if PHP_MAJOR_VERSION >= 7
         hiredis_obj_handlers.offset = XtOffsetOf(hiredis_t, std);
@@ -825,13 +860,18 @@ PHP_MINIT_FUNCTION(hiredis) {
     #if PHP_MAJOR_VERSION >= 7
         hiredis_exception_ce = zend_register_internal_class_ex(&ce, zend_ce_exception);
     #else
-        hiredis_exception_ce = zend_register_internal_class_ex(&ce, NULL, NULL TSRMLS_CC);
+        hiredis_exception_ce = zend_register_internal_class_ex(&ce, zend_exception_get_default(TSRMLS_C), NULL TSRMLS_CC);
     #endif
 
     // Init func_cmd_map for __call
     zend_hash_init(&func_cmd_map, 0, NULL, NULL, 1);
-    #define PHP_HIREDIS_MAP_FUNC_CMD(pfunc, pcmd) \
-       zend_hash_str_add_ptr(&func_cmd_map, (pfunc), sizeof((pfunc))-1, (pcmd));
+    #if PHP_MAJOR_VERSION >= 7
+        #define PHP_HIREDIS_MAP_FUNC_CMD(pfunc, pcmd) \
+            zend_hash_str_add_ptr(&func_cmd_map, (pfunc), sizeof((pfunc))-1, (pcmd));
+    #else
+        #define PHP_HIREDIS_MAP_FUNC_CMD(pfunc, pcmd) \
+            zend_hash_add(&func_cmd_map, (pfunc), sizeof((pfunc))-1, (void**)(pcmd), sizeof(char*), NULL);
+    #endif
     PHP_HIREDIS_MAP_FUNC_CMD("append", "APPEND");
     PHP_HIREDIS_MAP_FUNC_CMD("auth", "AUTH");
     PHP_HIREDIS_MAP_FUNC_CMD("bgrewriteaof", "BGREWRITEAOF");

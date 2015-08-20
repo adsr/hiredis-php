@@ -27,6 +27,9 @@
 #include <hiredis.h>
 
 typedef struct {
+#if PHP_MAJOR_VERSION < 7
+    zend_object std;
+#endif
     redisContext* ctx;
     long timeout_us;
     int keep_alive_int_s;
@@ -34,7 +37,9 @@ typedef struct {
     int throw_exceptions;
     int err;
     char errstr[128];
+#if PHP_MAJOR_VERSION >= 7
     zend_object std;
+#endif
 } hiredis_t;
 
 extern zend_module_entry hiredis_module_entry;
