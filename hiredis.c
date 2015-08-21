@@ -39,7 +39,7 @@
 static zend_object_handlers hiredis_obj_handlers;
 static zend_class_entry *hiredis_ce;
 static zend_class_entry *hiredis_exception_ce;
-static HashTable func_cmd_map;
+static HashTable hiredis_cmd_map;
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_none, 0, 0, 0)
 ZEND_END_ARG_INFO()
@@ -478,28 +478,33 @@ PHP_METHOD(Hiredis, __destruct) {
    Magic command handler. */
 PHP_METHOD(Hiredis, __call) {
     hiredis_t* client;
+    char* ofunc;
     char* func;
-    char* cmd = NULL;
+    char* cmd;
     size_t func_len;
     zval* func_args;
     int func_argc;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS(), "sa", &func, &func_len, &func_args) == FAILURE) {
+    if (zend_parse_parameters(ZEND_NUM_ARGS(), "sa", &ofunc, &func_len, &func_args) == FAILURE) {
         RETURN_FALSE;
     }
 
     client = Z_HIREDIS_P(getThis());
     PHP_HIREDIS_ENSURE_CTX(client);
 
+    func = estrndup(ofunc, func_len);
+    php_strtoupper(func, func_len);
+    cmd = NULL;
     #if PHP_MAJOR_VERSION >= 7
-        cmd = zend_hash_str_find_ptr(&func_cmd_map, func, func_len);
+        if (zend_hash_str_exists(&hiredis_cmd_map, func, func_len)) {
+            cmd = func
+        }
     #else
-        // TODO This entire block feels wrong
-        void** data;
-        if (SUCCESS == zend_hash_find(&func_cmd_map, func, func_len, (void**)&data)) {
-            cmd = (char*)data;
+        if (zend_hash_exists(&hiredis_cmd_map, func, func_len)) {
+            cmd = func;
         }
     #endif
+
     if (cmd) {
         _hiredis_convert_zval_to_array_of_zvals(func_args, &func_args, &func_argc);
         _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAM_PASSTHRU, client, cmd, func_args, func_argc, 0);
@@ -511,6 +516,7 @@ PHP_METHOD(Hiredis, __call) {
             zend_throw_exception_ex(NULL, 0 TSRMLS_CC, "Call to undefined method Hiredis::%s()", func);
         #endif
     }
+    efree(func);
 }
 /* }}} */
 
@@ -863,183 +869,183 @@ PHP_MINIT_FUNCTION(hiredis) {
         hiredis_exception_ce = zend_register_internal_class_ex(&ce, zend_exception_get_default(TSRMLS_C), NULL TSRMLS_CC);
     #endif
 
-    // Init func_cmd_map for __call
-    zend_hash_init(&func_cmd_map, 0, NULL, NULL, 1);
+    // Init hiredis_cmd_map for __call
+    zend_hash_init(&hiredis_cmd_map, 0, NULL, NULL, 1);
     #if PHP_MAJOR_VERSION >= 7
-        #define PHP_HIREDIS_MAP_FUNC_CMD(pfunc, pcmd) \
-            zend_hash_str_add_ptr(&func_cmd_map, (pfunc), sizeof((pfunc))-1, (pcmd));
+        #define PHP_HIREDIS_MAP_CMD(pcmd) \
+            zend_hash_str_add_empty_element(&hiredis_cmd_map, (pfunc), sizeof((pfunc))-1);
     #else
-        #define PHP_HIREDIS_MAP_FUNC_CMD(pfunc, pcmd) \
-            zend_hash_add(&func_cmd_map, (pfunc), sizeof((pfunc))-1, (void**)(pcmd), sizeof(char*), NULL);
+        #define PHP_HIREDIS_MAP_CMD(pfunc) \
+            zend_hash_add_empty_element(&hiredis_cmd_map, (pfunc), sizeof((pfunc))-1);
     #endif
-    PHP_HIREDIS_MAP_FUNC_CMD("append", "APPEND");
-    PHP_HIREDIS_MAP_FUNC_CMD("auth", "AUTH");
-    PHP_HIREDIS_MAP_FUNC_CMD("bgrewriteaof", "BGREWRITEAOF");
-    PHP_HIREDIS_MAP_FUNC_CMD("bgsave", "BGSAVE");
-    PHP_HIREDIS_MAP_FUNC_CMD("bitcount", "BITCOUNT");
-    PHP_HIREDIS_MAP_FUNC_CMD("bitop", "BITOP");
-    PHP_HIREDIS_MAP_FUNC_CMD("bitpos", "BITPOS");
-    PHP_HIREDIS_MAP_FUNC_CMD("blpop", "BLPOP");
-    PHP_HIREDIS_MAP_FUNC_CMD("brpop", "BRPOP");
-    PHP_HIREDIS_MAP_FUNC_CMD("brpoplpush", "BRPOPLPUSH");
-    PHP_HIREDIS_MAP_FUNC_CMD("client", "CLIENT");
-    PHP_HIREDIS_MAP_FUNC_CMD("cluster", "CLUSTER");
-    PHP_HIREDIS_MAP_FUNC_CMD("command", "COMMAND");
-    PHP_HIREDIS_MAP_FUNC_CMD("config", "CONFIG");
-    PHP_HIREDIS_MAP_FUNC_CMD("dbsize", "DBSIZE");
-    PHP_HIREDIS_MAP_FUNC_CMD("debug", "DEBUG");
-    PHP_HIREDIS_MAP_FUNC_CMD("decr", "DECR");
-    PHP_HIREDIS_MAP_FUNC_CMD("decrby", "DECRBY");
-    PHP_HIREDIS_MAP_FUNC_CMD("del", "DEL");
-    PHP_HIREDIS_MAP_FUNC_CMD("discard", "DISCARD");
-    PHP_HIREDIS_MAP_FUNC_CMD("dump", "DUMP");
-    PHP_HIREDIS_MAP_FUNC_CMD("echo", "ECHO");
-    PHP_HIREDIS_MAP_FUNC_CMD("eval", "EVAL");
-    PHP_HIREDIS_MAP_FUNC_CMD("evalsha", "EVALSHA");
-    PHP_HIREDIS_MAP_FUNC_CMD("exec", "EXEC");
-    PHP_HIREDIS_MAP_FUNC_CMD("exists", "EXISTS");
-    PHP_HIREDIS_MAP_FUNC_CMD("expire", "EXPIRE");
-    PHP_HIREDIS_MAP_FUNC_CMD("expireat", "EXPIREAT");
-    PHP_HIREDIS_MAP_FUNC_CMD("flushall", "FLUSHALL");
-    PHP_HIREDIS_MAP_FUNC_CMD("flushdb", "FLUSHDB");
-    PHP_HIREDIS_MAP_FUNC_CMD("geoadd", "GEOADD");
-    PHP_HIREDIS_MAP_FUNC_CMD("geodist", "GEODIST");
-    PHP_HIREDIS_MAP_FUNC_CMD("geohash", "GEOHASH");
-    PHP_HIREDIS_MAP_FUNC_CMD("geopos", "GEOPOS");
-    PHP_HIREDIS_MAP_FUNC_CMD("georadius", "GEORADIUS");
-    PHP_HIREDIS_MAP_FUNC_CMD("georadiusbymember", "GEORADIUSBYMEMBER");
-    PHP_HIREDIS_MAP_FUNC_CMD("get", "GET");
-    PHP_HIREDIS_MAP_FUNC_CMD("getbit", "GETBIT");
-    PHP_HIREDIS_MAP_FUNC_CMD("getrange", "GETRANGE");
-    PHP_HIREDIS_MAP_FUNC_CMD("getset", "GETSET");
-    PHP_HIREDIS_MAP_FUNC_CMD("hdel", "HDEL");
-    PHP_HIREDIS_MAP_FUNC_CMD("hexists", "HEXISTS");
-    PHP_HIREDIS_MAP_FUNC_CMD("hget", "HGET");
-    PHP_HIREDIS_MAP_FUNC_CMD("hgetall", "HGETALL");
-    PHP_HIREDIS_MAP_FUNC_CMD("hincrby", "HINCRBY");
-    PHP_HIREDIS_MAP_FUNC_CMD("hincrbyfloat", "HINCRBYFLOAT");
-    PHP_HIREDIS_MAP_FUNC_CMD("hkeys", "HKEYS");
-    PHP_HIREDIS_MAP_FUNC_CMD("hlen", "HLEN");
-    PHP_HIREDIS_MAP_FUNC_CMD("hmget", "HMGET");
-    PHP_HIREDIS_MAP_FUNC_CMD("hmset", "HMSET");
-    PHP_HIREDIS_MAP_FUNC_CMD("hscan", "HSCAN");
-    PHP_HIREDIS_MAP_FUNC_CMD("hset", "HSET");
-    PHP_HIREDIS_MAP_FUNC_CMD("hsetnx", "HSETNX");
-    PHP_HIREDIS_MAP_FUNC_CMD("hstrlen", "HSTRLEN");
-    PHP_HIREDIS_MAP_FUNC_CMD("hvals", "HVALS");
-    PHP_HIREDIS_MAP_FUNC_CMD("incr", "INCR");
-    PHP_HIREDIS_MAP_FUNC_CMD("incrby", "INCRBY");
-    PHP_HIREDIS_MAP_FUNC_CMD("incrbyfloat", "INCRBYFLOAT");
-    PHP_HIREDIS_MAP_FUNC_CMD("info", "INFO");
-    PHP_HIREDIS_MAP_FUNC_CMD("keys", "KEYS");
-    PHP_HIREDIS_MAP_FUNC_CMD("lastsave", "LASTSAVE");
-    PHP_HIREDIS_MAP_FUNC_CMD("lindex", "LINDEX");
-    PHP_HIREDIS_MAP_FUNC_CMD("linsert", "LINSERT");
-    PHP_HIREDIS_MAP_FUNC_CMD("llen", "LLEN");
-    PHP_HIREDIS_MAP_FUNC_CMD("lpop", "LPOP");
-    PHP_HIREDIS_MAP_FUNC_CMD("lpush", "LPUSH");
-    PHP_HIREDIS_MAP_FUNC_CMD("lpushx", "LPUSHX");
-    PHP_HIREDIS_MAP_FUNC_CMD("lrange", "LRANGE");
-    PHP_HIREDIS_MAP_FUNC_CMD("lrem", "LREM");
-    PHP_HIREDIS_MAP_FUNC_CMD("lset", "LSET");
-    PHP_HIREDIS_MAP_FUNC_CMD("ltrim", "LTRIM");
-    PHP_HIREDIS_MAP_FUNC_CMD("mget", "MGET");
-    PHP_HIREDIS_MAP_FUNC_CMD("migrate", "MIGRATE");
-    PHP_HIREDIS_MAP_FUNC_CMD("monitor", "MONITOR");
-    PHP_HIREDIS_MAP_FUNC_CMD("move", "MOVE");
-    PHP_HIREDIS_MAP_FUNC_CMD("mset", "MSET");
-    PHP_HIREDIS_MAP_FUNC_CMD("msetnx", "MSETNX");
-    PHP_HIREDIS_MAP_FUNC_CMD("multi", "MULTI");
-    PHP_HIREDIS_MAP_FUNC_CMD("object", "OBJECT");
-    PHP_HIREDIS_MAP_FUNC_CMD("persist", "PERSIST");
-    PHP_HIREDIS_MAP_FUNC_CMD("pexpire", "PEXPIRE");
-    PHP_HIREDIS_MAP_FUNC_CMD("pexpireat", "PEXPIREAT");
-    PHP_HIREDIS_MAP_FUNC_CMD("pfadd", "PFADD");
-    PHP_HIREDIS_MAP_FUNC_CMD("pfcount", "PFCOUNT");
-    PHP_HIREDIS_MAP_FUNC_CMD("pfmerge", "PFMERGE");
-    PHP_HIREDIS_MAP_FUNC_CMD("ping", "PING");
-    PHP_HIREDIS_MAP_FUNC_CMD("psetex", "PSETEX");
-    PHP_HIREDIS_MAP_FUNC_CMD("psubscribe", "PSUBSCRIBE");
-    PHP_HIREDIS_MAP_FUNC_CMD("pttl", "PTTL");
-    PHP_HIREDIS_MAP_FUNC_CMD("publish", "PUBLISH");
-    PHP_HIREDIS_MAP_FUNC_CMD("pubsub", "PUBSUB");
-    PHP_HIREDIS_MAP_FUNC_CMD("punsubscribe", "PUNSUBSCRIBE");
-    PHP_HIREDIS_MAP_FUNC_CMD("quit", "QUIT");
-    PHP_HIREDIS_MAP_FUNC_CMD("randomkey", "RANDOMKEY");
-    PHP_HIREDIS_MAP_FUNC_CMD("rename", "RENAME");
-    PHP_HIREDIS_MAP_FUNC_CMD("renamenx", "RENAMENX");
-    PHP_HIREDIS_MAP_FUNC_CMD("restore", "RESTORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("role", "ROLE");
-    PHP_HIREDIS_MAP_FUNC_CMD("rpop", "RPOP");
-    PHP_HIREDIS_MAP_FUNC_CMD("rpoplpush", "RPOPLPUSH");
-    PHP_HIREDIS_MAP_FUNC_CMD("rpush", "RPUSH");
-    PHP_HIREDIS_MAP_FUNC_CMD("rpushx", "RPUSHX");
-    PHP_HIREDIS_MAP_FUNC_CMD("sadd", "SADD");
-    PHP_HIREDIS_MAP_FUNC_CMD("save", "SAVE");
-    PHP_HIREDIS_MAP_FUNC_CMD("scan", "SCAN");
-    PHP_HIREDIS_MAP_FUNC_CMD("scard", "SCARD");
-    PHP_HIREDIS_MAP_FUNC_CMD("script", "SCRIPT");
-    PHP_HIREDIS_MAP_FUNC_CMD("sdiff", "SDIFF");
-    PHP_HIREDIS_MAP_FUNC_CMD("sdiffstore", "SDIFFSTORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("select", "SELECT");
-    PHP_HIREDIS_MAP_FUNC_CMD("set", "SET");
-    PHP_HIREDIS_MAP_FUNC_CMD("setbit", "SETBIT");
-    PHP_HIREDIS_MAP_FUNC_CMD("setex", "SETEX");
-    PHP_HIREDIS_MAP_FUNC_CMD("setnx", "SETNX");
-    PHP_HIREDIS_MAP_FUNC_CMD("setrange", "SETRANGE");
-    PHP_HIREDIS_MAP_FUNC_CMD("shutdown", "SHUTDOWN");
-    PHP_HIREDIS_MAP_FUNC_CMD("sinter", "SINTER");
-    PHP_HIREDIS_MAP_FUNC_CMD("sinterstore", "SINTERSTORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("sismember", "SISMEMBER");
-    PHP_HIREDIS_MAP_FUNC_CMD("slaveof", "SLAVEOF");
-    PHP_HIREDIS_MAP_FUNC_CMD("slowlog", "SLOWLOG");
-    PHP_HIREDIS_MAP_FUNC_CMD("smembers", "SMEMBERS");
-    PHP_HIREDIS_MAP_FUNC_CMD("smove", "SMOVE");
-    PHP_HIREDIS_MAP_FUNC_CMD("sort", "SORT");
-    PHP_HIREDIS_MAP_FUNC_CMD("spop", "SPOP");
-    PHP_HIREDIS_MAP_FUNC_CMD("srandmember", "SRANDMEMBER");
-    PHP_HIREDIS_MAP_FUNC_CMD("srem", "SREM");
-    PHP_HIREDIS_MAP_FUNC_CMD("sscan", "SSCAN");
-    PHP_HIREDIS_MAP_FUNC_CMD("strlen", "STRLEN");
-    PHP_HIREDIS_MAP_FUNC_CMD("subscribe", "SUBSCRIBE");
-    PHP_HIREDIS_MAP_FUNC_CMD("sunion", "SUNION");
-    PHP_HIREDIS_MAP_FUNC_CMD("sunionstore", "SUNIONSTORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("sync", "SYNC");
-    PHP_HIREDIS_MAP_FUNC_CMD("time", "TIME");
-    PHP_HIREDIS_MAP_FUNC_CMD("ttl", "TTL");
-    PHP_HIREDIS_MAP_FUNC_CMD("type", "TYPE");
-    PHP_HIREDIS_MAP_FUNC_CMD("unsubscribe", "UNSUBSCRIBE");
-    PHP_HIREDIS_MAP_FUNC_CMD("unwatch", "UNWATCH");
-    PHP_HIREDIS_MAP_FUNC_CMD("wait", "WAIT");
-    PHP_HIREDIS_MAP_FUNC_CMD("watch", "WATCH");
-    PHP_HIREDIS_MAP_FUNC_CMD("zadd", "ZADD");
-    PHP_HIREDIS_MAP_FUNC_CMD("zcard", "ZCARD");
-    PHP_HIREDIS_MAP_FUNC_CMD("zcount", "ZCOUNT");
-    PHP_HIREDIS_MAP_FUNC_CMD("zincrby", "ZINCRBY");
-    PHP_HIREDIS_MAP_FUNC_CMD("zinterstore", "ZINTERSTORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("zlexcount", "ZLEXCOUNT");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrange", "ZRANGE");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrangebylex", "ZRANGEBYLEX");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrangebyscore", "ZRANGEBYSCORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrank", "ZRANK");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrem", "ZREM");
-    PHP_HIREDIS_MAP_FUNC_CMD("zremrangebylex", "ZREMRANGEBYLEX");
-    PHP_HIREDIS_MAP_FUNC_CMD("zremrangebyrank", "ZREMRANGEBYRANK");
-    PHP_HIREDIS_MAP_FUNC_CMD("zremrangebyscore", "ZREMRANGEBYSCORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrevrange", "ZREVRANGE");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrevrangebylex", "ZREVRANGEBYLEX");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrevrangebyscore", "ZREVRANGEBYSCORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("zrevrank", "ZREVRANK");
-    PHP_HIREDIS_MAP_FUNC_CMD("zscan", "ZSCAN");
-    PHP_HIREDIS_MAP_FUNC_CMD("zscore", "ZSCORE");
-    PHP_HIREDIS_MAP_FUNC_CMD("zunionstore", "ZUNIONSTORE");
-    #undef PHP_HIREDIS_MAP_FUNC_CMD
+    PHP_HIREDIS_MAP_CMD("APPEND");
+    PHP_HIREDIS_MAP_CMD("AUTH");
+    PHP_HIREDIS_MAP_CMD("BGREWRITEAOF");
+    PHP_HIREDIS_MAP_CMD("BGSAVE");
+    PHP_HIREDIS_MAP_CMD("BITCOUNT");
+    PHP_HIREDIS_MAP_CMD("BITOP");
+    PHP_HIREDIS_MAP_CMD("BITPOS");
+    PHP_HIREDIS_MAP_CMD("BLPOP");
+    PHP_HIREDIS_MAP_CMD("BRPOP");
+    PHP_HIREDIS_MAP_CMD("BRPOPLPUSH");
+    PHP_HIREDIS_MAP_CMD("CLIENT");
+    PHP_HIREDIS_MAP_CMD("CLUSTER");
+    PHP_HIREDIS_MAP_CMD("COMMAND");
+    PHP_HIREDIS_MAP_CMD("CONFIG");
+    PHP_HIREDIS_MAP_CMD("DBSIZE");
+    PHP_HIREDIS_MAP_CMD("DEBUG");
+    PHP_HIREDIS_MAP_CMD("DECR");
+    PHP_HIREDIS_MAP_CMD("DECRBY");
+    PHP_HIREDIS_MAP_CMD("DEL");
+    PHP_HIREDIS_MAP_CMD("DISCARD");
+    PHP_HIREDIS_MAP_CMD("DUMP");
+    PHP_HIREDIS_MAP_CMD("ECHO");
+    PHP_HIREDIS_MAP_CMD("EVAL");
+    PHP_HIREDIS_MAP_CMD("EVALSHA");
+    PHP_HIREDIS_MAP_CMD("EXEC");
+    PHP_HIREDIS_MAP_CMD("EXISTS");
+    PHP_HIREDIS_MAP_CMD("EXPIRE");
+    PHP_HIREDIS_MAP_CMD("EXPIREAT");
+    PHP_HIREDIS_MAP_CMD("FLUSHALL");
+    PHP_HIREDIS_MAP_CMD("FLUSHDB");
+    PHP_HIREDIS_MAP_CMD("GEOADD");
+    PHP_HIREDIS_MAP_CMD("GEODIST");
+    PHP_HIREDIS_MAP_CMD("GEOHASH");
+    PHP_HIREDIS_MAP_CMD("GEOPOS");
+    PHP_HIREDIS_MAP_CMD("GEORADIUS");
+    PHP_HIREDIS_MAP_CMD("GEORADIUSBYMEMBER");
+    PHP_HIREDIS_MAP_CMD("GET");
+    PHP_HIREDIS_MAP_CMD("GETBIT");
+    PHP_HIREDIS_MAP_CMD("GETRANGE");
+    PHP_HIREDIS_MAP_CMD("GETSET");
+    PHP_HIREDIS_MAP_CMD("HDEL");
+    PHP_HIREDIS_MAP_CMD("HEXISTS");
+    PHP_HIREDIS_MAP_CMD("HGET");
+    PHP_HIREDIS_MAP_CMD("HGETALL");
+    PHP_HIREDIS_MAP_CMD("HINCRBY");
+    PHP_HIREDIS_MAP_CMD("HINCRBYFLOAT");
+    PHP_HIREDIS_MAP_CMD("HKEYS");
+    PHP_HIREDIS_MAP_CMD("HLEN");
+    PHP_HIREDIS_MAP_CMD("HMGET");
+    PHP_HIREDIS_MAP_CMD("HMSET");
+    PHP_HIREDIS_MAP_CMD("HSCAN");
+    PHP_HIREDIS_MAP_CMD("HSET");
+    PHP_HIREDIS_MAP_CMD("HSETNX");
+    PHP_HIREDIS_MAP_CMD("HSTRLEN");
+    PHP_HIREDIS_MAP_CMD("HVALS");
+    PHP_HIREDIS_MAP_CMD("INCR");
+    PHP_HIREDIS_MAP_CMD("INCRBY");
+    PHP_HIREDIS_MAP_CMD("INCRBYFLOAT");
+    PHP_HIREDIS_MAP_CMD("INFO");
+    PHP_HIREDIS_MAP_CMD("KEYS");
+    PHP_HIREDIS_MAP_CMD("LASTSAVE");
+    PHP_HIREDIS_MAP_CMD("LINDEX");
+    PHP_HIREDIS_MAP_CMD("LINSERT");
+    PHP_HIREDIS_MAP_CMD("LLEN");
+    PHP_HIREDIS_MAP_CMD("LPOP");
+    PHP_HIREDIS_MAP_CMD("LPUSH");
+    PHP_HIREDIS_MAP_CMD("LPUSHX");
+    PHP_HIREDIS_MAP_CMD("LRANGE");
+    PHP_HIREDIS_MAP_CMD("LREM");
+    PHP_HIREDIS_MAP_CMD("LSET");
+    PHP_HIREDIS_MAP_CMD("LTRIM");
+    PHP_HIREDIS_MAP_CMD("MGET");
+    PHP_HIREDIS_MAP_CMD("MIGRATE");
+    PHP_HIREDIS_MAP_CMD("MONITOR");
+    PHP_HIREDIS_MAP_CMD("MOVE");
+    PHP_HIREDIS_MAP_CMD("MSET");
+    PHP_HIREDIS_MAP_CMD("MSETNX");
+    PHP_HIREDIS_MAP_CMD("MULTI");
+    PHP_HIREDIS_MAP_CMD("OBJECT");
+    PHP_HIREDIS_MAP_CMD("PERSIST");
+    PHP_HIREDIS_MAP_CMD("PEXPIRE");
+    PHP_HIREDIS_MAP_CMD("PEXPIREAT");
+    PHP_HIREDIS_MAP_CMD("PFADD");
+    PHP_HIREDIS_MAP_CMD("PFCOUNT");
+    PHP_HIREDIS_MAP_CMD("PFMERGE");
+    PHP_HIREDIS_MAP_CMD("PING");
+    PHP_HIREDIS_MAP_CMD("PSETEX");
+    PHP_HIREDIS_MAP_CMD("PSUBSCRIBE");
+    PHP_HIREDIS_MAP_CMD("PTTL");
+    PHP_HIREDIS_MAP_CMD("PUBLISH");
+    PHP_HIREDIS_MAP_CMD("PUBSUB");
+    PHP_HIREDIS_MAP_CMD("PUNSUBSCRIBE");
+    PHP_HIREDIS_MAP_CMD("QUIT");
+    PHP_HIREDIS_MAP_CMD("RANDOMKEY");
+    PHP_HIREDIS_MAP_CMD("RENAME");
+    PHP_HIREDIS_MAP_CMD("RENAMENX");
+    PHP_HIREDIS_MAP_CMD("RESTORE");
+    PHP_HIREDIS_MAP_CMD("ROLE");
+    PHP_HIREDIS_MAP_CMD("RPOP");
+    PHP_HIREDIS_MAP_CMD("RPOPLPUSH");
+    PHP_HIREDIS_MAP_CMD("RPUSH");
+    PHP_HIREDIS_MAP_CMD("RPUSHX");
+    PHP_HIREDIS_MAP_CMD("SADD");
+    PHP_HIREDIS_MAP_CMD("SAVE");
+    PHP_HIREDIS_MAP_CMD("SCAN");
+    PHP_HIREDIS_MAP_CMD("SCARD");
+    PHP_HIREDIS_MAP_CMD("SCRIPT");
+    PHP_HIREDIS_MAP_CMD("SDIFF");
+    PHP_HIREDIS_MAP_CMD("SDIFFSTORE");
+    PHP_HIREDIS_MAP_CMD("SELECT");
+    PHP_HIREDIS_MAP_CMD("SET");
+    PHP_HIREDIS_MAP_CMD("SETBIT");
+    PHP_HIREDIS_MAP_CMD("SETEX");
+    PHP_HIREDIS_MAP_CMD("SETNX");
+    PHP_HIREDIS_MAP_CMD("SETRANGE");
+    PHP_HIREDIS_MAP_CMD("SHUTDOWN");
+    PHP_HIREDIS_MAP_CMD("SINTER");
+    PHP_HIREDIS_MAP_CMD("SINTERSTORE");
+    PHP_HIREDIS_MAP_CMD("SISMEMBER");
+    PHP_HIREDIS_MAP_CMD("SLAVEOF");
+    PHP_HIREDIS_MAP_CMD("SLOWLOG");
+    PHP_HIREDIS_MAP_CMD("SMEMBERS");
+    PHP_HIREDIS_MAP_CMD("SMOVE");
+    PHP_HIREDIS_MAP_CMD("SORT");
+    PHP_HIREDIS_MAP_CMD("SPOP");
+    PHP_HIREDIS_MAP_CMD("SRANDMEMBER");
+    PHP_HIREDIS_MAP_CMD("SREM");
+    PHP_HIREDIS_MAP_CMD("SSCAN");
+    PHP_HIREDIS_MAP_CMD("STRLEN");
+    PHP_HIREDIS_MAP_CMD("SUBSCRIBE");
+    PHP_HIREDIS_MAP_CMD("SUNION");
+    PHP_HIREDIS_MAP_CMD("SUNIONSTORE");
+    PHP_HIREDIS_MAP_CMD("SYNC");
+    PHP_HIREDIS_MAP_CMD("TIME");
+    PHP_HIREDIS_MAP_CMD("TTL");
+    PHP_HIREDIS_MAP_CMD("TYPE");
+    PHP_HIREDIS_MAP_CMD("UNSUBSCRIBE");
+    PHP_HIREDIS_MAP_CMD("UNWATCH");
+    PHP_HIREDIS_MAP_CMD("WAIT");
+    PHP_HIREDIS_MAP_CMD("WATCH");
+    PHP_HIREDIS_MAP_CMD("ZADD");
+    PHP_HIREDIS_MAP_CMD("ZCARD");
+    PHP_HIREDIS_MAP_CMD("ZCOUNT");
+    PHP_HIREDIS_MAP_CMD("ZINCRBY");
+    PHP_HIREDIS_MAP_CMD("ZINTERSTORE");
+    PHP_HIREDIS_MAP_CMD("ZLEXCOUNT");
+    PHP_HIREDIS_MAP_CMD("ZRANGE");
+    PHP_HIREDIS_MAP_CMD("ZRANGEBYLEX");
+    PHP_HIREDIS_MAP_CMD("ZRANGEBYSCORE");
+    PHP_HIREDIS_MAP_CMD("ZRANK");
+    PHP_HIREDIS_MAP_CMD("ZREM");
+    PHP_HIREDIS_MAP_CMD("ZREMRANGEBYLEX");
+    PHP_HIREDIS_MAP_CMD("ZREMRANGEBYRANK");
+    PHP_HIREDIS_MAP_CMD("ZREMRANGEBYSCORE");
+    PHP_HIREDIS_MAP_CMD("ZREVRANGE");
+    PHP_HIREDIS_MAP_CMD("ZREVRANGEBYLEX");
+    PHP_HIREDIS_MAP_CMD("ZREVRANGEBYSCORE");
+    PHP_HIREDIS_MAP_CMD("ZREVRANK");
+    PHP_HIREDIS_MAP_CMD("ZSCAN");
+    PHP_HIREDIS_MAP_CMD("ZSCORE");
+    PHP_HIREDIS_MAP_CMD("ZUNIONSTORE");
+    #undef PHP_HIREDIS_MAP_CMD
 }
 /* }}} */
 
 /* {{{ PHP_MSHUTDOWN_FUNCTION */
 PHP_MSHUTDOWN_FUNCTION(hiredis) {
-    zend_hash_destroy(&func_cmd_map);
+    zend_hash_destroy(&hiredis_cmd_map);
     return SUCCESS;
 }
 /* }}} */
