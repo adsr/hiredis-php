@@ -6,6 +6,7 @@ Check Hiredis::z*
 <?php
 $h = new Hiredis();
 var_dump($h->connect('localhost', 6379));
+$h->zrem('quuxset', 'one', 'two', 'three');
 var_dump($h->zadd('quuxset', 1, 'one'));
 var_dump($h->zadd('quuxset', 2, 'two'));
 var_dump($h->zadd('quuxset', 3, 'three'));
