@@ -41,6 +41,12 @@ static zend_class_entry *hiredis_ce;
 static zend_class_entry *hiredis_exception_ce;
 static HashTable hiredis_cmd_map;
 
+#if PHP_MAJOR_VERSION >= 7
+    typedef size_t strlen_t;
+#else
+    typedef int strlen_t;
+#endif
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_none, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
@@ -341,14 +347,25 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
         j++;
     }
     for (i = 0; i < argc; i++, j++) {
-        #if PHP_MAJOR_VERSION >= 7
-            convert_to_string_ex(&args[i]);
-        #else
-            zval* _zp = &args[i];
-            convert_to_string_ex(&_zp);
-        #endif
-        string_args[j] = Z_STRVAL_P(&args[i]);
-        string_lens[j] = Z_STRLEN_P(&args[i]);
+        zval* _zp = &args[i];
+        if (
+            #if PHP_MAJOR_VERSION >= 7
+                Z_TYPE_P(_zp) == IS_TRUE || Z_TYPE_P(_zp) == IS_FALSE
+            #else
+                Z_TYPE_P(_zp) == IS_BOOL
+            #endif
+        ) {
+            string_args[j] = zend_is_true(_zp) ? "1" : "0";
+            string_lens[j] = 1;
+        } else {
+            #if PHP_MAJOR_VERSION >= 7
+                convert_to_string_ex(_zp);
+            #else
+                convert_to_string_ex(&_zp);
+            #endif
+            string_args[j] = Z_STRVAL_P(&args[i]);
+            string_lens[j] = Z_STRLEN_P(&args[i]);
+        }
     }
 
     // Send/queue command
@@ -480,8 +497,8 @@ PHP_METHOD(Hiredis, __call) {
     hiredis_t* client;
     char* ofunc;
     char* func;
+    strlen_t func_len;
     char* cmd;
-    size_t func_len;
     zval* func_args;
     int func_argc;
 
@@ -497,7 +514,7 @@ PHP_METHOD(Hiredis, __call) {
     cmd = NULL;
     #if PHP_MAJOR_VERSION >= 7
         if (zend_hash_str_exists(&hiredis_cmd_map, func, func_len)) {
-            cmd = func
+            cmd = func;
         }
     #else
         if (zend_hash_exists(&hiredis_cmd_map, func, func_len)) {
@@ -526,7 +543,7 @@ PHP_FUNCTION(hiredis_connect) {
     zval* zobj;
     hiredis_t* client;
     char* ip;
-    size_t ip_len;
+    strlen_t ip_len;
     long port;
     double timeout_s = -1;
     if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "Osl|d", &zobj, hiredis_ce, &ip, &ip_len, &port, &timeout_s) == FAILURE) {
@@ -557,7 +574,7 @@ PHP_FUNCTION(hiredis_connect_unix) {
     zval* zobj;
     hiredis_t* client;
     char* path;
-    size_t path_len;
+    strlen_t path_len;
     if (zend_parse_method_parameters(ZEND_NUM_ARGS(), getThis(), "Os", &zobj, hiredis_ce, &path, &path_len) == FAILURE) {
         RETURN_FALSE;
     }
@@ -873,10 +890,10 @@ PHP_MINIT_FUNCTION(hiredis) {
     zend_hash_init(&hiredis_cmd_map, 0, NULL, NULL, 1);
     #if PHP_MAJOR_VERSION >= 7
         #define PHP_HIREDIS_MAP_CMD(pcmd) \
-            zend_hash_str_add_empty_element(&hiredis_cmd_map, (pfunc), sizeof((pfunc))-1);
+            zend_hash_str_add_empty_element(&hiredis_cmd_map, (pcmd), sizeof((pcmd))-1);
     #else
-        #define PHP_HIREDIS_MAP_CMD(pfunc) \
-            zend_hash_add_empty_element(&hiredis_cmd_map, (pfunc), sizeof((pfunc))-1);
+        #define PHP_HIREDIS_MAP_CMD(pcmd) \
+            zend_hash_add_empty_element(&hiredis_cmd_map, (pcmd), sizeof((pcmd))-1);
     #endif
     PHP_HIREDIS_MAP_CMD("APPEND");
     PHP_HIREDIS_MAP_CMD("AUTH");
