@@ -124,13 +124,18 @@ ZEND_END_ARG_INFO()
 } while(0)
 
 /* Macro to handle returning/throwing a zval to userland */
+#if PHP_MAJOR_VERSION >= 7
+    #define PHP_HIREDIS_RETVAL_DTOR 1
+#else
+    #define PHP_HIREDIS_RETVAL_DTOR 0
+#endif
 #define PHP_HIREDIS_RETURN_OR_THROW(client, zv) do { \
     if (Z_TYPE_P(zv) == IS_OBJECT && instanceof_function(Z_OBJCE_P(zv), hiredis_exception_ce)) { \
         PHP_HIREDIS_SET_ERROR_EX((client), REDIS_ERR, _hidreis_get_exception_message(zv)); \
-        zval_dtor(zv); \
+        if (PHP_HIREDIS_RETVAL_DTOR) zval_dtor(zv); \
         RETVAL_FALSE; \
     } else { \
-        RETVAL_ZVAL((zv), 1, 1); \
+        RETVAL_ZVAL((zv), 1, PHP_HIREDIS_RETVAL_DTOR); \
     } \
     hiredis_replyobj_free((zv)); \
 } while(0)
@@ -308,7 +313,18 @@ static void* hiredis_replyobj_create_nil(const redisReadTask* task) {
 
 /* redisReplyObjectFunctions: Free object */
 static void hiredis_replyobj_free(void* obj) {
-    // TODO
+    #if PHP_MAJOR_VERSION < 7
+        zval* z = (zval*)obj;
+        zval* ze;
+        if (Z_TYPE_P(z) == IS_ARRAY) {
+            ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(z), ze) {
+                hiredis_replyobj_free((void*)ze);
+            } ZEND_HASH_FOREACH_END();
+            zend_hash_destroy(Z_ARRVAL_P(z));
+        }
+        zval_dtor(z);
+        //FREE_ZVAL(z);
+    #endif
 }
 
 /* Declare reply object funcs */
