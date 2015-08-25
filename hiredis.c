@@ -41,12 +41,6 @@ static zend_class_entry *hiredis_ce;
 static zend_class_entry *hiredis_exception_ce;
 static HashTable hiredis_cmd_map;
 
-#if PHP_MAJOR_VERSION >= 7
-    typedef size_t strlen_t;
-#else
-    typedef int strlen_t;
-#endif
-
 ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_none, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
@@ -89,11 +83,22 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_hiredis_set_throw_exceptions, 0, 0, 1)
     ZEND_ARG_INFO(0, true_or_false)
 ZEND_END_ARG_INFO()
 
-/* Macro to get hiredis_t from zval */
 #if PHP_MAJOR_VERSION >= 7
-#define Z_HIREDIS_P(zv) hiredis_obj_fetch(Z_OBJ_P((zv)))
+    typedef size_t strlen_t;
+    #define Z_HIREDIS_P(zv) hiredis_obj_fetch(Z_OBJ_P((zv)))
+    #define MAKE_STD_ZVAL(zv) do { \
+        zval _sz; \
+        (zv) = &_sz; \
+    } while (0)
 #else
-#define Z_HIREDIS_P(zv) hiredis_obj_fetch(zv TSRMLS_CC)
+    typedef int strlen_t;
+    #define Z_HIREDIS_P(zv) hiredis_obj_fetch(zv TSRMLS_CC)
+    #define ZEND_HASH_FOREACH_VAL(_ht, _ppv) do { \
+        HashPosition _pos; \
+        for (zend_hash_internal_pointer_reset_ex((_ht), &_pos); \
+            zend_hash_get_current_data_ex((_ht), (void **) &(_ppv), &_pos) == SUCCESS; \
+            zend_hash_move_forward_ex((_ht), &_pos) ) {
+    #define ZEND_HASH_FOREACH_END() } } while (0)
 #endif
 
 /* Macro to set custom err and errstr together */
@@ -119,13 +124,15 @@ ZEND_END_ARG_INFO()
 } while(0)
 
 /* Macro to handle returning/throwing a zval to userland */
-#define PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, zv) do { \
+#define PHP_HIREDIS_RETURN_OR_THROW(client, zv) do { \
     if (Z_TYPE_P(zv) == IS_OBJECT && instanceof_function(Z_OBJCE_P(zv), hiredis_exception_ce)) { \
         PHP_HIREDIS_SET_ERROR_EX((client), REDIS_ERR, _hidreis_get_exception_message(zv)); \
+        zval_dtor(zv); \
         RETVAL_FALSE; \
     } else { \
-        RETVAL_ZVAL((zv), 0, 0); \
+        RETVAL_ZVAL((zv), 1, 1); \
     } \
+    hiredis_replyobj_free((zv)); \
 } while(0)
 
 /* Return exception message */
@@ -228,59 +235,80 @@ static int _hiredis_set_keep_alive_int(hiredis_t* client, int interval) {
 }
 
 /* redisReplyObjectFunctions: Nest zval in parent array */
-static void _hiredis_replyobj_nest(const redisReadTask* task, zval* z) {
-    zval* parent;
-    if (task && task->parent != NULL) {
+static zval* _hiredis_replyobj_nest(const redisReadTask* task, zval* z) {
+    zval* rv = z;
+    if (task->parent) {
+        zval* parent;
         parent = (zval*)task->parent->obj;
         assert(Z_TYPE_P(parent) == IS_ARRAY);
-        add_index_zval(parent, task->idx, z);
+        #if PHP_MAJOR_VERSION >= 7
+            rv = zend_hash_index_update(Z_ARRVAL_P(parent), task->idx, z);
+        #else
+            add_index_zval(parent, task->idx, z);
+        #endif
     }
+    return rv;
+}
+
+/* redisReplyObjectFunctions: Get zval to operate on */
+static zval* _hiredis_replyobj_get_zval(const redisReadTask* task, zval* stack_zval) {
+    zval* rv;
+    if (task->parent) {
+        #if PHP_MAJOR_VERSION >= 7
+            rv = stack_zval;
+        #else
+            MAKE_STD_ZVAL(rv);
+        #endif
+    } else {
+        rv = (zval*)task->privdata;
+    }
+    return rv;
 }
 
 /* redisReplyObjectFunctions: Create string */
 static void* hiredis_replyobj_create_string(const redisReadTask* task, char* str, size_t len) {
-    zval* z = (zval*)safe_emalloc(1, sizeof(zval), 0);
+    zval sz;
+    zval* z = _hiredis_replyobj_get_zval(task, &sz);
     if (task->type == REDIS_REPLY_ERROR) {
         object_init_ex(z, hiredis_exception_ce);
         zend_update_property_stringl(hiredis_exception_ce, z, "message", sizeof("message")-1, str, len);
     } else {
         #if PHP_MAJOR_VERSION >= 7
-        ZVAL_STRINGL(z, str, len);
+            ZVAL_STRINGL(z, str, len);
         #else
-        ZVAL_STRINGL(z, str, len, 1);
+            ZVAL_STRINGL(z, str, len, 1);
         #endif
     }
-    _hiredis_replyobj_nest(task, z);
-    return (void*)z;
+    return (void*)_hiredis_replyobj_nest(task, z);
 }
 
 /* redisReplyObjectFunctions: Create array */
 static void* hiredis_replyobj_create_array(const redisReadTask* task, int len) {
-    zval* z = (zval*)safe_emalloc(1, sizeof(zval), 0);
+    zval sz;
+    zval* z = _hiredis_replyobj_get_zval(task, &sz);
     array_init_size(z, len);
-    _hiredis_replyobj_nest(task, z);
-    return (void*)z;
+    return (void*)_hiredis_replyobj_nest(task, z);
 }
 
 /* redisReplyObjectFunctions: Create int */
 static void* hiredis_replyobj_create_integer(const redisReadTask* task, long long i) {
-    zval* z = (zval*)safe_emalloc(1, sizeof(zval), 0);
+    zval sz;
+    zval* z = _hiredis_replyobj_get_zval(task, &sz);
     ZVAL_LONG(z, i);
-    _hiredis_replyobj_nest(task, z);
-    return (void*)z;
+    return (void*)_hiredis_replyobj_nest(task, z);
 }
 
 /* redisReplyObjectFunctions: Create nil */
 static void* hiredis_replyobj_create_nil(const redisReadTask* task) {
-    zval* z = (zval*)safe_emalloc(1, sizeof(zval), 0);
+    zval sz;
+    zval* z = _hiredis_replyobj_get_zval(task, &sz);
     ZVAL_NULL(z);
-    _hiredis_replyobj_nest(task, z);
-    return (void*)z;
+    return (void*)_hiredis_replyobj_nest(task, z);
 }
 
 /* redisReplyObjectFunctions: Free object */
 static void hiredis_replyobj_free(void* obj) {
-    // TODO confirm gc, else efree((zval*)obj);
+    // TODO
 }
 
 /* Declare reply object funcs */
@@ -340,14 +368,24 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
     num_strings = cmd ? argc + 1 : argc;
     string_args = (char**)safe_emalloc(num_strings, sizeof(char*), 0);
     string_lens = (size_t*)safe_emalloc(num_strings, sizeof(size_t), 0);
+    #if PHP_MAJOR_VERSION >= 7
+        zend_string** string_zstrs;
+        string_zstrs = (zend_string**)safe_emalloc(num_strings, sizeof(zend_string*), 0);
+    #endif
     j = 0;
     if (cmd) {
         string_args[j] = cmd;
         string_lens[j] = strlen(cmd);
+        #if PHP_MAJOR_VERSION >= 7
+            string_zstrs[j] = NULL;
+        #endif
         j++;
     }
     for (i = 0; i < argc; i++, j++) {
         zval* _zp = &args[i];
+        #if PHP_MAJOR_VERSION >= 7
+            string_zstrs[j] = NULL;
+        #endif
         if (
             #if PHP_MAJOR_VERSION >= 7
                 Z_TYPE_P(_zp) == IS_TRUE || Z_TYPE_P(_zp) == IS_FALSE
@@ -358,13 +396,16 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
             string_args[j] = zend_is_true(_zp) ? "1" : "0";
             string_lens[j] = 1;
         } else {
-            #if PHP_MAJOR_VERSION >= 7
-                convert_to_string_ex(_zp);
-            #else
-                convert_to_string_ex(&_zp);
-            #endif
-            string_args[j] = Z_STRVAL_P(&args[i]);
-            string_lens[j] = Z_STRLEN_P(&args[i]);
+            if (Z_TYPE_P(_zp) != IS_STRING) {
+                #if PHP_MAJOR_VERSION >= 7
+                    convert_to_string_ex(_zp);
+                    string_zstrs[j] = Z_STR_P(_zp);
+                #else
+                    convert_to_string_ex(&_zp);
+                #endif
+            }
+            string_args[j] = Z_STRVAL_P(_zp);
+            string_lens[j] = Z_STRLEN_P(_zp);
         }
     }
 
@@ -377,8 +418,10 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
             RETVAL_TRUE;
         }
     } else {
+        redisReplyReaderSetPrivdata(client->ctx->reader, (void*)return_value);
         if (zv = (zval*)redisCommandArgv(client->ctx, num_strings, (const char**)string_args, string_lens)) {
-            PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, zv);
+            assert(zv == return_value);
+            PHP_HIREDIS_RETURN_OR_THROW(client, return_value);
         } else {
             PHP_HIREDIS_SET_ERROR(client);
             RETVAL_FALSE;
@@ -386,6 +429,14 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
     }
 
     // Cleanup
+    #if PHP_MAJOR_VERSION >= 7
+        for (i = 0; i < num_strings; i++) {
+            if (string_zstrs[i]) {
+                zend_string_release(string_zstrs[i]);
+            }
+        }
+        efree(string_zstrs);
+    #endif
     efree(string_args);
     efree(string_lens);
 }
@@ -786,11 +837,13 @@ PHP_FUNCTION(hiredis_get_reply) {
     }
     client = Z_HIREDIS_P(zobj);
     PHP_HIREDIS_ENSURE_CTX(client);
-    if (REDIS_OK != redisGetReply(client->ctx, (void*)&reply)) {
+    redisReplyReaderSetPrivdata(client->ctx->reader, (void*)return_value);
+    if (REDIS_OK != redisGetReply(client->ctx, (void**)&reply)) {
         PHP_HIREDIS_SET_ERROR(client);
         RETURN_FALSE;
     } else if (reply) {
-        PHP_HIREDIS_RETURN_OR_THROW_ZVAL(client, reply);
+        assert(reply == return_value);
+        PHP_HIREDIS_RETURN_OR_THROW(client, return_value);
     } else {
         PHP_HIREDIS_SET_ERROR_EX(client, REDIS_ERR, "redisGetReply returned NULL");
         RETURN_FALSE;
