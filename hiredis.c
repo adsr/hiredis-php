@@ -92,6 +92,7 @@ ZEND_END_ARG_INFO()
     } while (0)
 #else
     typedef int strlen_t;
+    typedef char zend_string;
     #define Z_HIREDIS_P(zv) hiredis_obj_fetch(zv TSRMLS_CC)
     #define ZEND_HASH_FOREACH_VAL(_ht, _ppv) do { \
         HashPosition _pos; \
@@ -125,19 +126,18 @@ ZEND_END_ARG_INFO()
 
 /* Macro to handle returning/throwing a zval to userland */
 #if PHP_MAJOR_VERSION >= 7
-    #define PHP_HIREDIS_RETVAL_DTOR 1
+    #define PHP_HIREDIS_RETVAL_COPY_DTOR 1
 #else
-    #define PHP_HIREDIS_RETVAL_DTOR 0
+    #define PHP_HIREDIS_RETVAL_COPY_DTOR 0
 #endif
 #define PHP_HIREDIS_RETURN_OR_THROW(client, zv) do { \
     if (Z_TYPE_P(zv) == IS_OBJECT && instanceof_function(Z_OBJCE_P(zv), hiredis_exception_ce)) { \
         PHP_HIREDIS_SET_ERROR_EX((client), REDIS_ERR, _hidreis_get_exception_message(zv)); \
-        if (PHP_HIREDIS_RETVAL_DTOR) zval_dtor(zv); \
+        if (PHP_HIREDIS_RETVAL_COPY_DTOR) zval_dtor(zv); \
         RETVAL_FALSE; \
     } else { \
-        RETVAL_ZVAL((zv), 1, PHP_HIREDIS_RETVAL_DTOR); \
+        RETVAL_ZVAL((zv), PHP_HIREDIS_RETVAL_COPY_DTOR, PHP_HIREDIS_RETVAL_COPY_DTOR); \
     } \
-    hiredis_replyobj_free((zv)); \
 } while(0)
 
 /* Return exception message */
@@ -313,18 +313,8 @@ static void* hiredis_replyobj_create_nil(const redisReadTask* task) {
 
 /* redisReplyObjectFunctions: Free object */
 static void hiredis_replyobj_free(void* obj) {
-    #if PHP_MAJOR_VERSION < 7
-        zval* z = (zval*)obj;
-        zval* ze;
-        if (Z_TYPE_P(z) == IS_ARRAY) {
-            ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(z), ze) {
-                hiredis_replyobj_free((void*)ze);
-            } ZEND_HASH_FOREACH_END();
-            zend_hash_destroy(Z_ARRVAL_P(z));
-        }
-        zval_dtor(z);
-        //FREE_ZVAL(z);
-    #endif
+    // TODO Everything should get gc'd. Confirm this is the case when hiredis
+    //      invokes this function directly.
 }
 
 /* Declare reply object funcs */
@@ -375,6 +365,7 @@ static void _hiredis_convert_zval_to_array_of_zvals(zval* arr, zval** ret_zvals,
 static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* client, char* cmd, zval* args, int argc, int is_append) {
     char** string_args;
     size_t* string_lens;
+    zend_string** string_zstrs;
     int i, j;
     zval* zv;
     int num_strings;
@@ -384,24 +375,17 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
     num_strings = cmd ? argc + 1 : argc;
     string_args = (char**)safe_emalloc(num_strings, sizeof(char*), 0);
     string_lens = (size_t*)safe_emalloc(num_strings, sizeof(size_t), 0);
-    #if PHP_MAJOR_VERSION >= 7
-        zend_string** string_zstrs;
-        string_zstrs = (zend_string**)safe_emalloc(num_strings, sizeof(zend_string*), 0);
-    #endif
+    string_zstrs = (zend_string**)safe_emalloc(num_strings, sizeof(zend_string*), 0);
     j = 0;
     if (cmd) {
         string_args[j] = cmd;
         string_lens[j] = strlen(cmd);
-        #if PHP_MAJOR_VERSION >= 7
-            string_zstrs[j] = NULL;
-        #endif
+        string_zstrs[j] = NULL;
         j++;
     }
     for (i = 0; i < argc; i++, j++) {
         zval* _zp = &args[i];
-        #if PHP_MAJOR_VERSION >= 7
-            string_zstrs[j] = NULL;
-        #endif
+        string_zstrs[j] = NULL;
         if (
             #if PHP_MAJOR_VERSION >= 7
                 Z_TYPE_P(_zp) == IS_TRUE || Z_TYPE_P(_zp) == IS_FALSE
@@ -417,7 +401,8 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
                     convert_to_string_ex(_zp);
                     string_zstrs[j] = Z_STR_P(_zp);
                 #else
-                    convert_to_string_ex(&_zp);
+                    convert_to_string(_zp);
+                    string_zstrs[j] = Z_STRVAL_P(_zp);
                 #endif
             }
             string_args[j] = Z_STRVAL_P(_zp);
@@ -445,14 +430,16 @@ static void _hiredis_send_raw_array(INTERNAL_FUNCTION_PARAMETERS, hiredis_t* cli
     }
 
     // Cleanup
-    #if PHP_MAJOR_VERSION >= 7
-        for (i = 0; i < num_strings; i++) {
-            if (string_zstrs[i]) {
+    for (i = 0; i < num_strings; i++) {
+        if (string_zstrs[i]) {
+            #if PHP_MAJOR_VERSION >= 7
                 zend_string_release(string_zstrs[i]);
-            }
+            #else
+                STR_FREE(string_zstrs[i]);
+            #endif
         }
-        efree(string_zstrs);
-    #endif
+    }
+    efree(string_zstrs);
     efree(string_args);
     efree(string_lens);
 }
@@ -501,6 +488,7 @@ static void _hiredis_send_raw(INTERNAL_FUNCTION_PARAMETERS, int is_array, int is
         if (is_array) efree(args);
     #else
         efree(args);
+        efree(varargs);
     #endif
 }
 
